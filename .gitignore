@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local configs
+configs/*.local.yaml
+configs/*.local.yml
+configs/*.local.env
+
+# Runtime outputs
+outputs/
+wandb/
+logs/
+
+# Data and weights
+data/
+datasets/
+model_cache/
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# Notebook
+.ipynb_checkpoints/
+
+# Visualization exports
+paper_visualization/cache/
+paper_visualization/exports/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Virtual env / logs
+.venv/
+venv/
+*.log
