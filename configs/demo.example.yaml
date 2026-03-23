@@ -1,0 +1,53 @@
+# =========================
+# Upload-safe example config
+# 复制为 demo.local.yaml 后，将下面路径替换为你的本地模型与图像路径。
+# =========================
+
+specialized:
+  run_root: "${PROJECT_ROOT}/outputs/qwen_vis_fusion/official_cv_3class_rgb_dual_causal"
+  fold: "best"
+  device: "auto"
+  question_hint: "请判断该样本属于 normal、HEW 还是 LEL，并说明是否异常。"
+
+general:
+  model_name_or_path: "${QWEN2_VL_MODEL_PATH}"
+  device: "auto"
+  model_dtype: "bfloat16"
+  max_new_tokens: 256
+  do_sample: false
+  system_prompt: "你是一个工业视觉问答助手，请基于输入图像给出谨慎、专业、简洁的分析。"
+
+ui:
+  host: "0.0.0.0"
+  port: 7861
+  share: false
+  title: "SLM Defect VQA Comparator"
+  # TODO(upload): 用你的本地样本路径替换下面占位符，或直接删除整个 example_presets 段。
+  example_presets:
+    - id: "normal_example"
+      name: "正常样本"
+      label: "normal"
+      condition: "your_condition"
+      layer: 0
+      rgb1: "/path/to/your/rgb_view1_after.jpg"
+      rgb2: "/path/to/your/rgb_view2_after.jpg"
+      ir: "/path/to/your/ir_after.jpg"
+      question: "请判断该样本属于 normal、HEW 还是 LEL，并说明是否异常。"
+    - id: "hew_example"
+      name: "激光功率过高样本"
+      label: "HEW"
+      condition: "your_condition"
+      layer: 0
+      rgb1: "/path/to/your/rgb_view1_after.jpg"
+      rgb2: "/path/to/your/rgb_view2_after.jpg"
+      ir: "/path/to/your/ir_after.jpg"
+      question: "请判断它是否异常，并说明更像激光功率过高还是激光功率过低。"
+    - id: "lel_example"
+      name: "激光功率过低样本"
+      label: "LEL"
+      condition: "your_condition"
+      layer: 0
+      rgb1: "/path/to/your/rgb_view1_after.jpg"
+      rgb2: "/path/to/your/rgb_view2_after.jpg"
+      ir: "/path/to/your/ir_after.jpg"
+      question: "请判断该样本是否异常，并说明是否属于激光功率过低。"
