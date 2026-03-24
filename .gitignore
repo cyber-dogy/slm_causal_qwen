@@ -35,3 +35,14 @@ paper_visualization/exports/
 .DS_Store
 .vscode/
 
+# Office / WPS temporary lock files
+~$*
+~$$*
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.synctex(busy)
