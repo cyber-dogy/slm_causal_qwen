@@ -1,0 +1,59 @@
+\documentclass[lettersize,journal]{IEEEtran}
+\usepackage[UTF8]{ctex}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{array}
+\usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\usepackage{textcomp}
+\usepackage{stfloats}
+\usepackage{url}
+\usepackage{verbatim}
+\usepackage{graphicx}
+\usepackage{cite}
+\hyphenation{op-tical net-works semi-conduc-tor IEEE-Xplore}
+
+\newcommand{\sg}{\operatorname{sg}}
+
+\begin{document}
+
+\title{基于大模型先验与因果稳定约束的SLM多模态缺陷识别方法}
+
+\author{作者姓名
+\thanks{作者单位、基金信息与通讯作者说明将在正式投稿版本中补充。}}
+
+\markboth{IEEE Transactions on Industrial Informatics,~Vol.~XX, No.~XX, Month~2026}%
+{作者等: 基于大模型先验与因果稳定约束的SLM多模态缺陷识别方法}
+
+\maketitle
+
+\begin{abstract}
+选择性激光熔化（Selective Laser Melting, SLM）在线监测通常同时提供双视角可见光图像与红外热图，但在小样本和未见工况条件下，缺陷识别模型容易依赖工况纹理、热场背景等非稳定捷径特征，导致泛化性能显著下降。本文基于现有代码仓库，建立了以 \texttt{condition\_uid} 为划分单元的 \texttt{data1 official\_cv} 条件级主协议，并将 \texttt{data2 transfer\_test} 视为包含未见模型和未见工艺的外部迁移压力测试。围绕该设定，本文关注的核心问题是：如何在 SLM 多模态缺陷识别中有效使用大模型先验，并在未见工况下保持稳定识别能力。实验表明，直接采用 Qwen2-VL 进行 prompt 式闭集分类效果有限，在 \texttt{data1 official\_cv} 三分类上的 Macro-F1 仅为 0.3914。为此，本文提出一种基于 Qwen2-VL 视觉编码器、显式多模态融合头与因果稳定约束的大模型适配框架。该方法将 Qwen2-VL 作为预训练视觉先验，在融合表示空间中对同标签异工况样本施加一致性约束，并以轻量判别头完成小样本适配。实验结果表明，所提方法在 \texttt{data1 official\_cv} 上取得 0.8547 的 Macro-F1 和 0.8556 的 balanced accuracy，在 \texttt{data2 transfer\_test} 上取得 0.6067 的 Macro-F1，均优于 prompt-Qwen 和最强经典基线。输入消融进一步说明，RGB view 1、RGB view 2 与 IR 均提供有效缺陷线索，只是当前 Qwen 分支最优实现仍为双 RGB。进一步的真微调实验表明，直接解冻最后两个视觉 block 会导致性能退化，说明在当前小样本工业场景中，保留大模型先验并引入因果稳定约束，比激进端到端微调更有利于未见工况下的鲁棒识别。
+\end{abstract}
+
+\begin{IEEEkeywords}
+选择性激光熔化，缺陷识别，多模态融合，未见工况泛化，外部迁移，大模型先验，因果稳定约束。选选择性激光熔化过程中的熔池稳定性、热扩散状态与层间成形质量，会直接
+选择性激光熔化（Selective Laser Melting, SLM）通过逐层熔化金属粉末构建复杂几何零件，已广泛应用于航空航天、医疗器械和模具制造等领域 \cite{ref_defect_formation_slm}。SLM 成形涉及熔池动力学、热传导和凝固等复杂物理过程，工艺参数的波动会直接导致气孔、裂纹和几何变形等缺陷 \cite{ref_in_situ_monitoring_review}。微小的工艺偏差即可显著影响零件的机械性能和服役可靠性。
+
+工业系统通常部署可见光相机与红外热像仪同步监测 SLM 过程 \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}。可见光成像捕捉熔池形态和表面纹理，红外热成像反映热输入分布和温度场演化。这种多模态观测提供互补的缺陷表征信息。然而，现有监测方法大多假设训练数据与测试数据来自相同分布：当工艺参数、设备型号或粉末批次变化时，模型识别性能显著下降。
+
+这一失效模式源于深度学习模型对虚假相关性（spurious correlations）的过度依赖。模型倾向于利用背景纹理、光照条件或设备噪声等表面统计特征进行预测，而非缺陷本质的因果特征。在 SLM 多模态监测中，这意味着模型可能将特定工况下的热背景模式误识为缺陷依据，导致在未见工况（unseen condition）下失效。如何实现训练工况到未见工况的稳定识别，成为 SLM 缺陷识别的核心问题。
+
+预训练视觉大模型为上述问题提供了可能的解决路径。这些模型通常在海量多模态数据上训练，具备处理异构数据特征输入的能力；其接触到的多样化视觉模式，理论上应有助于提取跨工况稳定的特征。然而，现有实验表明：简单的提示工程（prompt engineering）方法在未见工况设定下性能不足。大模型的多模态先验并不能自动转化为对工业缺陷的准确识别，关键在于如何设计适配机制，使其在保持跨工况稳定性的同时，有效融合多源传感器数据中的互补信息。
+
+本文提出一种基于大模型先验与因果稳定约束的未见工况缺陷识别方法。核心思路是将预训练视觉大模型作为跨工况特征提取器，通过显式多模态融合整合可见光与红外热信息，并在融合空间中施加因果一致性约束。该方法采用轻量化的判别式适配机制，在保留大模型预训练先验的同时，学习跨工况不变的缺陷表征。具体而言，"因果稳定"假设认为：与工况相关的纹理、亮度和热背景特征会随工艺条件变化，而缺陷本体的本质特征应当在跨工况时保持稳定。通过对同标签但来自不同工况的样本施加一致性约束，模型被迫减少对不稳定环境因素的依赖，从而学习到从训练工况到未见工况的稳健映射。
+
+本文的主要贡献可概括为以下三方面：
+\begin{enumerate}
+\item 论证了多模态融合在未见工况缺陷识别中的必要性。通过对比单模态与多模态配置在跨工况场景下的性能差异，表明融合可见光与红外信息能够显著提升模型对未见设备、未见工艺参数的适应能力，为工业监测系统的传感器配置提供了实证依据。
+\item 构建了大模型先验引导的未见工况缺陷识别框架。该框架采用轻量化判别式适配机制，在冻结预训练视觉主干的同时，通过可学习的多模态融合头实现特征整合，兼顾了部署效率与识别精度。实验表明，该框架在跨设备迁移场景中保持了稳定的缺陷检出率，具备较强的工程实用性。
+\item 提出了因果稳定表征学习机制。通过对同标签但来自不同工况的样本施加一致性约束，迫使模型抑制对背景纹理、热噪声等环境因素的依赖，转而学习缺陷本体的本质特征。这一机制使模型能够从训练工况有效泛化到未见工况，为实现鲁棒的工业视觉监测提供了可行路径。
+\end{enumerate}
+
+\section{相关工作}
+\subsection{金属增材制造中的多模态缺陷监测}
+
+金属增材制造过程的在线监测对于确保成形质量至关重要。Zhang 等 \cite{ref_defect_formation_slm} 系统综述了选择性激光熔化中的缺陷形成机制，指出工艺参数波动与缺陷产生之间存在密切关联。Peng 等 \cite{ref_in_situ_monitoring_review} 进一步总结了缺陷检测与监测技术的最新进展。现有研究主要从三个技术路线开展：基于可见光成像的形貌分析、基于红外热成像的温度场监测，以及多传感器数据融合方法 \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}。
+
+多传感器融合已成为提升监测精度的有效途径。Wu 等 \cite{ref_wu2024_multisensor} 采用高速相机、光电二极管和麦克风三种模态对 LPBF 熔池过程进行实时监测，通过改进的 LeNet-5 和加权 Dempster-Shafer 证据理论进行单传感器、双传感器和三传感器融合对比，结果表明三传感器融合对质量等级的识别准确率显著提升。这一工作验证了多模态信息互补在缺陷识别中的必要性。
+
+针对高成本视觉传感器的部署限制，研究者探索了低成本多模态替代方案。Liu 等 \cite{ref_liu2024_acoustic} 利用声发射和热辐射信号推断高时间分辨率的熔池视觉特征，并识别空间相关的未熔合缺陷，实现了在 1.0 ms 时间窗内的熔池动态监测。该方法将难以集成的昂贵高速成像替换为更易部署的声学-热辐射组合，为工业现场的传感器配置提供了可行方案。

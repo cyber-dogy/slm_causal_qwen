@@ -1,0 +1,195 @@
+\caption{所提方法训练流程伪代码}
+\label{tab:pseudocode_cn}
+\centering
+\footnotesize
+\begin{minipage}{0.97\columnwidth}
+\begin{algorithmic}[1]
+\REQUIRE 训练集 $\mathcal{D}$，预训练 Qwen 视觉编码器 $f_{\theta_v}$，适配模式，$\lambda$
+\STATE 初始化融合头 $\theta_f$ 与分类器 $\theta_c$
+\STATE 按式 \eqref{eq:trainable_cn} 冻结或解冻相应参数
+\FOR{每个 epoch}
+\FOR{每个 mini-batch $\mathcal{B}$}
+\STATE 编码各模态输入并对视觉 token 做平均池化
+\STATE 拼接模态向量，得到 $\tilde{\mathbf{h}}_i$、$\mathbf{r}_i$ 和 $\hat{\mathbf{y}}_i$
+\STATE 为每个 anchor 从 $\Omega_i$ 中采样跨工况正样本 $\pi(i)$
+\STATE 根据式 \eqref{eq:lcc_cn} 计算 $\mathcal{L}_{\mathrm{cc}}$
+\STATE 计算 $\mathcal{L}_{\mathrm{cls}}$ 并最小化式 \eqref{eq:total_loss_cn}
+\ENDFOR
+\STATE 按验证集 Macro-F1 选择最佳 checkpoint
+\ENDFOR
+\STATE 在 \texttt{data1 official\_cv} 与 \texttt{data2 transfer\_test} 上评估最佳模型
+\end{algorithmic}
+\end{minipage}
+\end{table}
+
+\section{实验与分析}
+\subsection{实验设置}
+主方法采用 Qwen2-VL-2B-Instruct 视觉塔，输入方式为 \texttt{rgb\_dual}，hidden dim 为 512，dropout 为 0.1，batch size 为 4，优化器为 AdamW，学习率为 $3\times10^{-4}$，weight decay 为 $10^{-4}$，使用 cosine 调度、混合精度训练与 patience 为 2 的 early stopping。因果稳定约束权重取 0.1。真微调对照实验使用 batch size 1、3 个 epoch、patience 为 1，视觉侧学习率为 $2\times10^{-6}$，融合头学习率为 $5\times10^{-5}$，梯度裁剪阈值为 0.5。最强经典基线为 ResNet18 + \texttt{rgb\_dual} + MLP-concat。所有源域结果均在 3 个折上汇总。
+
+\subsection{条件级主协议结果}
+表~\ref{tab:data1_main_cn} 给出了 \texttt{data1 official\_cv} 三分类主结果。首先，Prompt-Qwen 在该协议上仅取得 0.3914 的 Macro-F1，说明直接 prompt 适配并不能有效利用大模型先验。其次，若将同一 Qwen2-VL 视觉先验转化为显式判别式融合框架，性能可提升到 0.8402。最后，在此基础上加入因果稳定约束后，Macro-F1 进一步提升到 0.8547，并超过当前最强经典基线 0.8323。由此可见，真正有效的不是“简单换成大模型”，而是“以稳定的判别式方式使用大模型先验”。
+
+\begin{table*}[!t]
+\caption{\texttt{data1 official\_cv} 三分类主结果}
+\label{tab:data1_main_cn}
+\centering
+\begin{tabular}{|l|l|c|c|c|}
+\hline
+方法家族 & 具体设置 & Accuracy & Balanced Accuracy & Macro-F1 \\
+\hline
+Prompt-Qwen & 3-class prompt baseline & 0.4809 $\pm$ 0.0602 & 0.5021 $\pm$ 0.0460 & 0.3914 $\pm$ 0.0587 \\
+\hline
+Classic & ResNet18 + \texttt{rgb\_dual} + MLP-concat & 0.8349 $\pm$ 0.0858 & 0.8412 $\pm$ 0.0846 & 0.8323 $\pm$ 0.0892 \\
+\hline
+QwenVisFusion & 冻结式先验 baseline & 0.8383 $\pm$ 0.1009 & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
+\hline
+QwenVisFusion & 冻结式先验 + 因果稳定约束 & \textbf{0.8521 $\pm$ 0.0929} & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
+\hline
+QwenVisFusion Last2 FT & 解冻最后两个视觉 block & 0.7850 $\pm$ 0.0378 & 0.7979 $\pm$ 0.0332 & 0.7781 $\pm$ 0.0411 \\
+\hline
+\end{tabular}
+\end{table*}
+
+辅助二分类结果也支持同样结论。Prompt-Qwen 的二分类 Macro-F1 仅为 0.3903，因果 Qwen 融合分支为 0.4707，均显著弱于经典最优二分类基线。因此，本文坚持将三分类作为主任务，把直接二分类仅作为负结果分析。
+
+\begin{figure}[!t]
+\centering
+% TODO: 替换为正式主结果图。
+\fbox{\rule{0pt}{1.4in}\rule{0.95\columnwidth}{0pt}}
+\caption{\texttt{data1 official\_cv} 三分类主结果占位图。}
+\label{fig:data1_main_cn}
+\end{figure}
+
+\subsection{多模态有效性分析}
+表~\ref{tab:ablation_cn} 给出了 Qwen 融合分支的输入消融结果。需要强调的是，这组结果支持的结论不是“只有双 RGB 有用”，而是“多模态有效，但其增益依赖融合方式”。首先，IR-only 仍能达到 0.6270 的 Macro-F1，说明红外热信息确实包含有意义的缺陷线索。其次，双 RGB 是当前 Qwen 架构下最稳定的输入形式，因为两个视角提供了更稳健的几何与纹理互补。最后，三模态直接拼接没有超过双 RGB，说明当前问题不在于是否引入 IR，而在于如何更有效地建模其热特征贡献。
+
+\begin{table}[!t]
+\caption{Qwen 融合分支三分类输入消融}
+\label{tab:ablation_cn}
+\centering
+\begin{tabular}{|l|c|c|}
+\hline
+输入方式 & Balanced Accuracy & Macro-F1 \\
+\hline
+\texttt{rgb\_view1} baseline & 0.7714 $\pm$ 0.0771 & 0.7419 $\pm$ 0.1203 \\
+\hline
+\texttt{ir\_only} baseline & 0.6508 $\pm$ 0.0708 & 0.6270 $\pm$ 0.0878 \\
+\hline
+\texttt{rgb\_dual} baseline & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
+\hline
+\texttt{triple\_view} baseline & 0.8169 $\pm$ 0.0659 & 0.8121 $\pm$ 0.0615 \\
+\hline
+\texttt{rgb\_dual} + 因果稳定约束 & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
+\hline
+\end{tabular}
+\end{table}
+
+这一判断与迁移基线的表现是相互印证的：在 \texttt{data2} 上，经典最优方法反而采用了 triple-view late fusion。这进一步说明 IR 并非无效，而是其最佳利用方式与模型家族密切相关。
+
+\subsection{因果稳定约束为何有效，真微调为何有害}
+从数值上看，因果稳定约束带来的提升幅度小于 Prompt-Qwen 到显式融合的性能跃迁，但它恰恰对应本文的核心创新点。在冻结式 Qwen 融合框架已经成立的前提下，因果稳定约束仍将 Macro-F1 从 0.8402 提升到 0.8547，将 balanced accuracy 从 0.8422 提升到 0.8556。这说明，在小样本未见工况场景中，单纯保留大模型先验还不够，还需要通过跨工况同标签对齐来抑制工况诱导的伪相关。
+
+真微调实验则给出了一个重要边界条件。若解冻最后两个视觉 block，则 \texttt{data1 official\_cv} 上的 Macro-F1 会从 0.8547 降到 0.7781，在 \texttt{data2 transfer\_test} 上则从 0.6067 降到 0.5808。该结果说明，当前问题并不是大模型先验“适配得还不够”，而是激进微调会破坏原有稳定视觉表征，引发对有限样本和工况特征的过拟合。换言之，因果稳定约束的价值在于提升“轻量适配”的质量，而不是为激进真微调兜底。
+
+\subsection{外部迁移压力测试结果}
+表~\ref{tab:data2_transfer_cn} 展示了 \texttt{data2 transfer\_test} 上的最佳三分类迁移结果。Prompt-Qwen 的 Macro-F1 为 0.4073，经典最优迁移基线为 0.4236，而本文方法达到 0.6067。由于 \texttt{data2} 含有更强的复合分布偏移，因此这一优势比单纯的源域提升更有说服力，它表明因果稳定约束不仅改善了源域条件级泛化，也增强了更强外部迁移场景下的识别稳健性。
+
+\begin{table}[!t]
+\caption{\texttt{data2 transfer\_test} 三分类最佳迁移结果}
+\label{tab:data2_transfer_cn}
+\centering
+\begin{tabular}{|l|c|c|}
+\hline
+家族 / 最佳模型 & Balanced Accuracy & Macro-F1 \\
+\hline
+Prompt-Qwen / \texttt{data1\_official\_cv\_3class\_baseline} & 0.4586 $\pm$ 0.0286 & 0.4073 $\pm$ 0.0511 \\
+\hline
+Classic / triple-view late fusion & 0.4973 $\pm$ 0.0954 & 0.4236 $\pm$ 0.1110 \\
+\hline
+QwenVisFusion / \texttt{rgb\_dual} + 因果稳定约束 & \textbf{0.6359 $\pm$ 0.0158} & \textbf{0.6067 $\pm$ 0.0351} \\
+\hline
+\end{tabular}
+\end{table}
+
+迁移结果也进一步补全了本文的多模态叙事。红外信息在增材制造监测中依然具有物理意义和统计价值 \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}。当前 Qwen 最优配置选择双 RGB，主要反映的是现有融合结构和样本规模的约束，而不是 IR 在缺陷识别中没有作用。
+
+\begin{figure}[!t]
+\centering
+% TODO: 替换为正式迁移结果图。
+\fbox{\rule{0pt}{1.4in}\rule{0.95\columnwidth}{0pt}}
+\caption{\texttt{data2 transfer\_test} 最佳模型对比占位图。}
+\label{fig:data2_transfer_cn}
+\end{figure}
+
+\section{结论}
+本文围绕一个更贴近工业部署的问题展开研究：在严格条件级划分和更强外部迁移压力下，如何利用大模型先验实现 SLM 多模态缺陷的稳定识别。基于仓库正式实验结果，本文表明直接 Prompt-Qwen 路线并不适合当前小样本未见工况任务。相比之下，将 Qwen2-VL 作为视觉先验编码器，结合显式多模态融合与因果稳定约束，能够在主协议和外部迁移测试上同时取得最优表现。进一步地，真微调实验说明，当前更有效的路径不是继续激进解冻视觉主干，而是保留强先验、通过因果稳定约束提升表示质量。后续工作可进一步探索面向 IR 热特征的更细粒度融合机制，以及比直接解冻更温和的视觉侧 adapter/LoRA 方案。
+
+\begin{thebibliography}{00}
+
+\bibitem{ref_defect_formation_slm}
+B.~Zhang, Y.~Li, and Q.~Bai, ``Defect formation mechanisms in selective laser melting: A review,'' \emph{Chinese Journal of Mechanical Engineering}, vol.~30, pp.~515--527, 2017.
+
+\bibitem{ref_in_situ_monitoring_review}
+X.~Peng, L.~Kong, H.~An, and G.~Dong, ``A review of in situ defect detection and monitoring technologies in selective laser melting,'' \emph{3D Printing and Additive Manufacturing}, vol.~10, no.~3, pp.~438--466, 2023.
+
+\bibitem{ref_lpbf_sensing_review}
+D.~Guillen, S.~Wahlquist, and A.~Ali, ``Critical review of LPBF metal print defects detection: Roles of selective sensing technology,'' \emph{Applied Sciences}, vol.~14, no.~15, p.~6718, 2024.
+
+\bibitem{ref_intelligent_defect_pbf}
+P.~Wang \emph{et al.}, ``Towards intelligent defect detection in metal powder bed fusion: A review of in situ monitoring, data pre-processing, and machine learning,'' \emph{Materials Science and Engineering: R: Reports}, vol.~167, p.~101112, 2026.
+
+\bibitem{ref_anomalygpt}
+Z.~Gu \emph{et al.}, ``AnomalyGPT: Detecting industrial anomalies using large vision-language models,'' arXiv:2308.15366, 2023.
+
+\bibitem{ref_myriad}
+Y.~Li \emph{et al.}, ``Myriad: Large multimodal model by applying vision experts for industrial anomaly detection,'' arXiv:2310.19070, 2023.
+
+\bibitem{ref_vlm_active_learning}
+S.~Chen and Y.~Liu, ``Vision-language model-assisted active learning for high-accuracy defect detection in automotive bushing components,'' in \emph{Proc. Int. Conf. Embodied Intelligence and Large Models}, 2025, pp.~9--14.
+
+\bibitem{ref_qlora_excavator}
+H.~V.~Nguyen, H.~Park, N.~Yoo, and J.~Yang, ``Resource-efficient fine-tuning of large vision-language models for multimodal perception in autonomous excavators,'' \emph{Frontiers in Artificial Intelligence}, vol.~8, p.~1681277, 2025.
+
+\bibitem{ref_omniad}
+S.~Zhao \emph{et al.}, ``OmniAD: Detect and understand industrial anomaly via multimodal reasoning,'' arXiv:2505.22039, 2025.
+
+\bibitem{ref_ad_copilot}
+X.~Jiang \emph{et al.}, ``AD-Copilot: A vision-language assistant for industrial anomaly detection via visual in-context comparison,'' arXiv:2603.13779, 2026.
+
+\bibitem{ref_wu2024_multisensor}
+Q.~Wu \emph{et al.}, ``In-situ quality intelligent classification of additively manufactured parts using a multi-sensor fusion based melt pool monitoring system,'' \emph{Additive Manufacturing Frontiers}, vol.~3, no.~3, p.~200153, 2024.
+
+\bibitem{ref_liu2024_acoustic}
+H.~Liu \emph{et al.}, ``Inference of highly time-resolved melt pool visual characteristics and spatially-dependent lack-of-fusion defects in laser powder bed fusion using acoustic and thermal emission data,'' \emph{Additive Manufacturing}, vol.~83, p.~104057, 2024.
+
+\bibitem{ref_shen2024_multisource}
+T.~Shen \emph{et al.}, ``Multi-source information fusion for enhanced in-process quality monitoring of laser powder bed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
+
+\bibitem{ref_li2024_transfer}
+J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
+
+\end{thebibliography}
+
+ed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
+
+\bibitem{ref_li2024_transfer}
+J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
+
+\end{thebibliography}
+
+ed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
+
+\bibitem{ref_li2024_transfer}
+J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
+
+\end{thebibliography}
+
+r bed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
+
+\bibitem{ref_li2024_transfer}
+J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
+
+\end{thebibliography}
+
+
+\end{document}

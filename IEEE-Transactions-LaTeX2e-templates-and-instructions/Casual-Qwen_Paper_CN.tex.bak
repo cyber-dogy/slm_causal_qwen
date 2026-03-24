@@ -1,0 +1,327 @@
+\documentclass[lettersize,journal]{IEEEtran}
+\usepackage[UTF8]{ctex}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{array}
+\usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\usepackage{textcomp}
+\usepackage{stfloats}
+\usepackage{url}
+\usepackage{verbatim}
+\usepackage{graphicx}
+\usepackage{cite}
+\hyphenation{op-tical net-works semi-conduc-tor IEEE-Xplore}
+
+\newcommand{\sg}{\operatorname{sg}}
+
+\begin{document}
+
+\title{基于大模型先验与因果稳定约束的SLM多模态缺陷识别方法}
+
+\author{作者姓名
+\thanks{作者单位、基金信息与通讯作者说明将在正式投稿版本中补充。}}
+
+\markboth{IEEE Transactions on Industrial Informatics,~Vol.~XX, No.~XX, Month~2026}%
+{作者等: 基于大模型先验与因果稳定约束的SLM多模态缺陷识别方法}
+
+\maketitle
+
+\begin{abstract}
+选择性激光熔化（Selective Laser Melting, SLM）在线监测通常同时提供双视角可见光图像与红外热图，但在小样本和未见工况条件下，缺陷识别模型容易依赖工况纹理、热场背景等非稳定捷径特征，导致泛化性能显著下降。本文基于现有代码仓库，建立了以 \texttt{condition\_uid} 为划分单元的 \texttt{data1 official\_cv} 条件级主协议，并将 \texttt{data2 transfer\_test} 视为包含未见模型和未见工艺的外部迁移压力测试。围绕该设定，本文关注的核心问题是：如何在 SLM 多模态缺陷识别中有效使用大模型先验，并在未见工况下保持稳定识别能力。实验表明，直接采用 Qwen2-VL 进行 prompt 式闭集分类效果有限，在 \texttt{data1 official\_cv} 三分类上的 Macro-F1 仅为 0.3914。为此，本文提出一种基于 Qwen2-VL 视觉编码器、显式多模态融合头与因果稳定约束的大模型适配框架。该方法将 Qwen2-VL 作为预训练视觉先验，在融合表示空间中对同标签异工况样本施加一致性约束，并以轻量判别头完成小样本适配。实验结果表明，所提方法在 \texttt{data1 official\_cv} 上取得 0.8547 的 Macro-F1 和 0.8556 的 balanced accuracy，在 \texttt{data2 transfer\_test} 上取得 0.6067 的 Macro-F1，均优于 prompt-Qwen 和最强经典基线。输入消融进一步说明，RGB view 1、RGB view 2 与 IR 均提供有效缺陷线索，只是当前 Qwen 分支最优实现仍为双 RGB。进一步的真微调实验表明，直接解冻最后两个视觉 block 会导致性能退化，说明在当前小样本工业场景中，保留大模型先验并引入因果稳定约束，比激进端到端微调更有利于未见工况下的鲁棒识别。
+\end{abstract}
+
+\begin{IEEEkeywords}
+选择性激光熔化，缺陷识别，多模态融合，未见工况泛化，外部迁移，大模型先验，因果稳定约束。
+\end{IEEEkeywords}
+
+\section{引言}
+选择性激光熔化过程中的熔池稳定性、热扩散状态与层间成形质量，会直接影响最终零件的缺陷形成。为实现在线监测与早期预警，工业系统通常同步采集多路可见光图像与红外热信息，以构成具有互补性的多模态观测 \cite{ref_pbf_review,ref_optical_defect,ref_ir_defect}。然而，对于真实部署而言，关键问题并不是随机划分下的闭集分类，而是在未见工况条件下能否维持稳定可靠的缺陷识别能力。
+
+本文所依托的仓库恰好提供了这样一个更接近工业场景的验证框架。其主协议 \texttt{data1 official\_cv} 以 \texttt{condition\_uid} 为划分单元，避免相同工况同时出现在训练集和测试集；\texttt{data2 transfer\_test} 则被保留为更困难的外部迁移压力测试，用于刻画未见模型、未见工艺及更复杂分布偏移下的泛化能力。因此，本文的研究对象不是普通的图像分类问题，而是未见工况下的 SLM 多模态缺陷识别。
+
+近年来，Qwen2-VL 等大模型为工业视觉任务带来了强大的预训练视觉先验 \cite{ref_qwen2vl}。但仓库中的已有实验也揭示出一个重要事实：大模型先验本身并不会自动转化为工业小样本识别性能。原始 Prompt-Qwen 路线将缺陷识别包装为语言建模问题，通过 prompt 和候选标签打分完成闭集分类，但在当前主协议上的表现明显不足。这意味着，真正的瓶颈不在于是否使用了大模型，而在于是否采用了合适的适配路径。
+
+基于这一观察，本文将研究主线收束到“基于大模型先验与因果稳定约束的多模态识别”上。具体而言，本文不再直接依赖 prompt 分类，而是将 Qwen2-VL 作为视觉先验编码器，显式融合多模态视觉输入，并在融合表示层对同标签异工况样本施加因果稳定约束。这里的“因果稳定”并非声称已经恢复完整的 SLM 成形因果图，而是强调：与工况相关的纹理、亮度和热背景相比，缺陷本体特征应当在跨工况时保持更稳定的判别作用。与此同时，本文在全文中始终保留“多模态有效性”这条叙事主线。当前最优 Qwen 配置虽然是双 RGB，但 IR-only 结果与 triple-view 迁移结果都说明红外热信息并非无效，而是尚未在现有 Qwen 融合结构中被最优利用。
+
+本文的主要贡献如下。
+\begin{enumerate}
+\item 基于仓库正式实验流程，明确构建了“条件级主协议 + 外部迁移压力测试”的论文叙事，使 SLM 多模态缺陷识别的评估边界与应用场景更加清晰。
+\item 提出一种围绕“大模型先验--多模态特征提取--因果稳定约束--轻量判别适配--输出预测”展开的识别框架，并将创新点集中于因果稳定约束对小样本大模型适配性能的提升。
+\item 通过 prompt-Qwen、经典多模态基线、冻结式 Qwen 融合和真微调对照实验说明：在当前未见工况和外部迁移设定下，稳定使用大模型先验比激进端到端微调更有效。
+\end{enumerate}
+
+\section{相关工作}
+\subsection{SLM 多模态在线监测与缺陷识别}
+围绕金属粉末床熔融过程的质量评估，现有研究已广泛采用层面光学图像、红外热图以及多传感器同步观测来识别异常状态和成形缺陷 \cite{ref_pbf_review,ref_optical_defect,ref_ir_defect,ref_multisensor_am,ref_multisensor_platform}。其中，可见光图像更适合刻画表面几何和纹理异常，红外热信息则更能反映热输入、熔池行为和潜在的热失稳。多模态研究进一步表明，合理的模态互补有助于提升缺陷建模能力。因此，本文并不将 RGB 与 IR 视为彼此替代的输入，而是将其视为不同机理下的互补证据。
+
+\subsection{大模型适配与稳定泛化}
+大模型视觉编码器能够提供强大的预训练先验，但强先验并不等于在工业场景中天然鲁棒。Qwen2-VL 展示了强大的通用视觉语言建模能力 \cite{ref_qwen2vl}，而稳定泛化相关研究则指出，当训练环境与测试环境发生变化时，模型若过度依赖环境特有特征，就会出现明显性能退化 \cite{ref_irm,ref_groupdro}。对于当前任务而言，这一问题表现为：在样本规模有限、工况变化显著时，模型很容易把工况相关纹理和热背景误当成缺陷依据。因此，本文将大模型适配问题转化为“保留视觉先验 + 学习跨工况稳定表示”的问题。
+
+\section{未见工况任务形式化}
+\subsection{条件级主协议}
+本文的主要结论基于 \texttt{data1 official\_cv}。该协议不是随机划分图像，而是以 \texttt{condition\_uid} 为划分单元，从源头上避免同一工况下样本的泄漏。这样得到的评估结果更能反映模型在未见工况上的泛化能力。本文的主任务是三分类缺陷识别，标签为 \texttt{normal}、\texttt{HEW} 和 \texttt{LEL}，其中原始数据中的 \texttt{HEV} 被并入 \texttt{HEW}。
+
+\subsection{外部迁移压力测试}
+\texttt{data2 transfer\_test} 不参与模型选择，而作为更困难的外部迁移测试。根据仓库中的分析脚本和结果报告，\texttt{data2} 与 \texttt{data1} 在模型来源、工艺参数、角色分布与纹理统计上均存在明显差异，因此不能简单视作另一组普通验证集，而应视作更接近真实部署压力的外部迁移测试。
+
+\subsection{多模态输入与评价目标}
+仓库当前支持四种输入方式：\texttt{rgb\_view1}、\texttt{rgb\_dual}、\texttt{ir\_only} 和 \texttt{triple\_view}。为统一表述，本文将输入模态集合写为 $\mathcal{M}\subseteq\{\mathrm{rgb1},\mathrm{rgb2},\mathrm{ir}\}$。主文所有核心结论均围绕三分类任务展开，因为对于 Qwen 分支而言，三分类比直接二分类更稳定，也更符合本文“识别具体缺陷模式”而不是“粗粒度异常检测”的目标。
+
+\begin{table}[!t]
+\caption{主协议与迁移协议的数据统计}
+\label{tab:data_stats_cn}
+\centering
+\begin{tabular}{|c|c|c|c|c|c|}
+\hline
+数据域 & 样本数 & 工况数 & Normal & HEW & LEL \\
+\hline
+\texttt{data1} & 289 & 22 & 104 & 86 & 99 \\
+\hline
+\texttt{data2} & 404 & 22 & 167 & 128 & 109 \\
+\hline
+\end{tabular}
+\end{table}
+
+表~\ref{tab:data_stats_cn} 给出了主协议和迁移协议的数据统计。图~\ref{fig:protocol_cn} 预留为后续正式绘制的协议示意图。
+
+\begin{figure}[!t]
+\centering
+% TODO: 替换为正式协议图。
+\fbox{\rule{0pt}{1.45in}\rule{0.95\columnwidth}{0pt}}
+\caption{\texttt{data1 official\_cv} 与 \texttt{data2 transfer\_test} 协议概览占位图。}
+\label{fig:protocol_cn}
+\end{figure}
+
+\section{方法}
+\subsection{多模态数据特征提取}
+对于样本 $i$，记其输入模态集合为 $\mathcal{M}_i=\{m_1,\dots,m_{K_i}\}$，其中每个模态对应 \texttt{rgb\_view1}、\texttt{rgb\_view2} 或 \texttt{ir}。本文将 Qwen2-VL 的视觉编码器 $f_{\theta_v}$ 作为大模型先验。对于任意模态 $m\in\mathcal{M}_i$，编码器输出视觉 token 序列：
+\begin{equation}
+\mathbf{T}_i^{(m)} = f_{\theta_v}\!\left(\mathbf{x}_i^{(m)}\right)\in\mathbb{R}^{P_i^{(m)}\times d},
+\end{equation}
+其中 $P_i^{(m)}$ 表示空间合并后的 token 数，$d$ 为视觉隐藏维度。与仓库实现一致，本文采用简单平均池化得到单模态表征：
+\begin{equation}
+\mathbf{z}_i^{(m)} = \frac{1}{P_i^{(m)}}\sum_{p=1}^{P_i^{(m)}}\mathbf{T}_{i,p}^{(m)}.
+\end{equation}
+
+随后，将各模态向量拼接并输入轻量融合头：
+\begin{equation}
+\mathbf{g}_i = \operatorname{Concat}\!\left(\mathbf{z}_i^{(m_1)},\dots,\mathbf{z}_i^{(m_{K_i})}\right),
+\end{equation}
+\begin{equation}
+\tilde{\mathbf{h}}_i = \phi\!\left(\operatorname{LN}(\mathbf{g}_i)\right), \quad
+\mathbf{r}_i = \frac{\tilde{\mathbf{h}}_i}{\|\tilde{\mathbf{h}}_i\|_2},
+\end{equation}
+其中 $\phi(\cdot)$ 为带有 GELU 和 Dropout 的两层 MLP 融合头。当前官方最优配置使用双 RGB 输入，但这并不意味着 IR 无效；相反，IR-only 的可观结果说明热信息本身具有明显价值，只是当前 Qwen 融合结构尚未把这部分价值完全释放出来。
+
+\subsection{因果稳定表征约束}
+记样本 $i$ 的缺陷标签为 $y_i$，工况为 $c_i$。对每个训练样本，数据集首先构造“同标签、异工况”的正样本池：
+\begin{equation}
+\Omega_i = \{j \mid j\neq i,\; y_j=y_i,\; c_j\neq c_i\}.
+\end{equation}
+训练时，若 $\Omega_i$ 非空，则随机采样一个正样本索引 $\pi(i)$。对 mini-batch $\mathcal{B}$，定义
+\begin{equation}
+\mathcal{B}^{+} = \{i\in\mathcal{B}\mid \Omega_i\neq\varnothing\}.
+\end{equation}
+因果稳定约束写为
+\begin{equation}
+\mathcal{L}_{\mathrm{cc}} =
+\frac{1}{|\mathcal{B}^{+}|}\sum_{i\in\mathcal{B}^{+}}
+\left(1-\mathbf{r}_i^{\top}\sg\!\left(\mathbf{r}_{\pi(i)}\right)\right),
+\label{eq:lcc_cn}
+\end{equation}
+其中 $\sg(\cdot)$ 表示对正样本分支执行 stop-gradient。这一写法与仓库实现保持一致，即正样本表征以 detached 方式参与约束计算，以降低显存开销并稳定训练。由于 $\mathbf{r}_i$ 已做 $\ell_2$ 归一化，式 \eqref{eq:lcc_cn} 本质上等价于对跨工况同标签样本的余弦距离进行约束。
+
+这里所谓“因果稳定”是一种操作性假设：在不同工况下，真正应保持稳定的是缺陷本体对应的判别依据，而不是工况相关纹理、亮度模式或热背景。通过跨工况同标签对齐，模型被迫减少对这些不稳定因素的依赖，从而更适合未见工况泛化。
+
+\subsection{大模型轻量适配与真微调对照}
+本文区分两种适配模式，其可训练参数集合定义为
+\begin{equation}
+\Theta_{\mathrm{train}}=
+\begin{cases}
+\{\theta_f,\theta_c\}, & \text{轻量适配},\\
+\{\theta_v^{\mathrm{last2}},\theta_m,\theta_f,\theta_c\}, & \text{真微调},
+\end{cases}
+\label{eq:trainable_cn}
+\end{equation}
+其中 $\theta_f$ 为融合头参数，$\theta_c$ 为分类器参数，$\theta_v^{\mathrm{last2}}$ 表示 Qwen2-VL 最后两个视觉 block，$\theta_m$ 表示 visual merger。轻量适配是本文的主方法，因为它能最大程度保留大模型视觉先验；真微调则作为诊断性对照，用于回答“在当前小样本场景下，是否继续解冻视觉主干会更好”这一问题。
+
+\subsection{输出层、优化目标与训练伪代码}
+最终三分类输出由未归一化融合表示生成：
+\begin{equation}
+\boldsymbol{\ell}_i = \mathbf{W}_c\tilde{\mathbf{h}}_i+\mathbf{b}_c, \qquad
+\hat{\mathbf{y}}_i=\operatorname{softmax}(\boldsymbol{\ell}_i).
+\end{equation}
+分类损失采用交叉熵：
+\begin{equation}
+\mathcal{L}_{\mathrm{cls}}=
+-\frac{1}{|\mathcal{B}|}\sum_{i\in\mathcal{B}}\log \hat{y}_{i,y_i},
+\end{equation}
+整体训练目标为
+\begin{equation}
+\mathcal{L}=\mathcal{L}_{\mathrm{cls}}+\lambda \mathcal{L}_{\mathrm{cc}},
+\label{eq:total_loss_cn}
+\end{equation}
+其中官方 causal 配置取 $\lambda=0.1$。训练流程伪代码见表~\ref{tab:pseudocode_cn}。
+
+\begin{figure*}[!t]
+\centering
+% TODO: 替换为正式方法框架图。
+\fbox{\rule{0pt}{1.9in}\rule{0.95\textwidth}{0pt}}
+\caption{本文方法框架占位图。正式版本应体现“多模态特征提取--因果稳定约束--大模型轻量适配/真微调对照--输出判别”四层结构。}
+\label{fig:framework_cn}
+\end{figure*}
+
+\begin{table}[!t]
+\caption{所提方法训练流程伪代码}
+\label{tab:pseudocode_cn}
+\centering
+\footnotesize
+\begin{minipage}{0.97\columnwidth}
+\begin{algorithmic}[1]
+\REQUIRE 训练集 $\mathcal{D}$，预训练 Qwen 视觉编码器 $f_{\theta_v}$，适配模式，$\lambda$
+\STATE 初始化融合头 $\theta_f$ 与分类器 $\theta_c$
+\STATE 按式 \eqref{eq:trainable_cn} 冻结或解冻相应参数
+\FOR{每个 epoch}
+\FOR{每个 mini-batch $\mathcal{B}$}
+\STATE 编码各模态输入并对视觉 token 做平均池化
+\STATE 拼接模态向量，得到 $\tilde{\mathbf{h}}_i$、$\mathbf{r}_i$ 和 $\hat{\mathbf{y}}_i$
+\STATE 为每个 anchor 从 $\Omega_i$ 中采样跨工况正样本 $\pi(i)$
+\STATE 根据式 \eqref{eq:lcc_cn} 计算 $\mathcal{L}_{\mathrm{cc}}$
+\STATE 计算 $\mathcal{L}_{\mathrm{cls}}$ 并最小化式 \eqref{eq:total_loss_cn}
+\ENDFOR
+\STATE 按验证集 Macro-F1 选择最佳 checkpoint
+\ENDFOR
+\STATE 在 \texttt{data1 official\_cv} 与 \texttt{data2 transfer\_test} 上评估最佳模型
+\end{algorithmic}
+\end{minipage}
+\end{table}
+
+\section{实验与分析}
+\subsection{实验设置}
+主方法采用 Qwen2-VL-2B-Instruct 视觉塔，输入方式为 \texttt{rgb\_dual}，hidden dim 为 512，dropout 为 0.1，batch size 为 4，优化器为 AdamW，学习率为 $3\times10^{-4}$，weight decay 为 $10^{-4}$，使用 cosine 调度、混合精度训练与 patience 为 2 的 early stopping。因果稳定约束权重取 0.1。真微调对照实验使用 batch size 1、3 个 epoch、patience 为 1，视觉侧学习率为 $2\times10^{-6}$，融合头学习率为 $5\times10^{-5}$，梯度裁剪阈值为 0.5。最强经典基线为 ResNet18 + \texttt{rgb\_dual} + MLP-concat。所有源域结果均在 3 个折上汇总。
+
+\subsection{条件级主协议结果}
+表~\ref{tab:data1_main_cn} 给出了 \texttt{data1 official\_cv} 三分类主结果。首先，Prompt-Qwen 在该协议上仅取得 0.3914 的 Macro-F1，说明直接 prompt 适配并不能有效利用大模型先验。其次，若将同一 Qwen2-VL 视觉先验转化为显式判别式融合框架，性能可提升到 0.8402。最后，在此基础上加入因果稳定约束后，Macro-F1 进一步提升到 0.8547，并超过当前最强经典基线 0.8323。由此可见，真正有效的不是“简单换成大模型”，而是“以稳定的判别式方式使用大模型先验”。
+
+\begin{table*}[!t]
+\caption{\texttt{data1 official\_cv} 三分类主结果}
+\label{tab:data1_main_cn}
+\centering
+\begin{tabular}{|l|l|c|c|c|}
+\hline
+方法家族 & 具体设置 & Accuracy & Balanced Accuracy & Macro-F1 \\
+\hline
+Prompt-Qwen & 3-class prompt baseline & 0.4809 $\pm$ 0.0602 & 0.5021 $\pm$ 0.0460 & 0.3914 $\pm$ 0.0587 \\
+\hline
+Classic & ResNet18 + \texttt{rgb\_dual} + MLP-concat & 0.8349 $\pm$ 0.0858 & 0.8412 $\pm$ 0.0846 & 0.8323 $\pm$ 0.0892 \\
+\hline
+QwenVisFusion & 冻结式先验 baseline & 0.8383 $\pm$ 0.1009 & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
+\hline
+QwenVisFusion & 冻结式先验 + 因果稳定约束 & \textbf{0.8521 $\pm$ 0.0929} & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
+\hline
+QwenVisFusion Last2 FT & 解冻最后两个视觉 block & 0.7850 $\pm$ 0.0378 & 0.7979 $\pm$ 0.0332 & 0.7781 $\pm$ 0.0411 \\
+\hline
+\end{tabular}
+\end{table*}
+
+辅助二分类结果也支持同样结论。Prompt-Qwen 的二分类 Macro-F1 仅为 0.3903，因果 Qwen 融合分支为 0.4707，均显著弱于经典最优二分类基线。因此，本文坚持将三分类作为主任务，把直接二分类仅作为负结果分析。
+
+\begin{figure}[!t]
+\centering
+% TODO: 替换为正式主结果图。
+\fbox{\rule{0pt}{1.4in}\rule{0.95\columnwidth}{0pt}}
+\caption{\texttt{data1 official\_cv} 三分类主结果占位图。}
+\label{fig:data1_main_cn}
+\end{figure}
+
+\subsection{多模态有效性分析}
+表~\ref{tab:ablation_cn} 给出了 Qwen 融合分支的输入消融结果。需要强调的是，这组结果支持的结论不是“只有双 RGB 有用”，而是“多模态有效，但其增益依赖融合方式”。首先，IR-only 仍能达到 0.6270 的 Macro-F1，说明红外热信息确实包含有意义的缺陷线索。其次，双 RGB 是当前 Qwen 架构下最稳定的输入形式，因为两个视角提供了更稳健的几何与纹理互补。最后，三模态直接拼接没有超过双 RGB，说明当前问题不在于是否引入 IR，而在于如何更有效地建模其热特征贡献。
+
+\begin{table}[!t]
+\caption{Qwen 融合分支三分类输入消融}
+\label{tab:ablation_cn}
+\centering
+\begin{tabular}{|l|c|c|}
+\hline
+输入方式 & Balanced Accuracy & Macro-F1 \\
+\hline
+\texttt{rgb\_view1} baseline & 0.7714 $\pm$ 0.0771 & 0.7419 $\pm$ 0.1203 \\
+\hline
+\texttt{ir\_only} baseline & 0.6508 $\pm$ 0.0708 & 0.6270 $\pm$ 0.0878 \\
+\hline
+\texttt{rgb\_dual} baseline & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
+\hline
+\texttt{triple\_view} baseline & 0.8169 $\pm$ 0.0659 & 0.8121 $\pm$ 0.0615 \\
+\hline
+\texttt{rgb\_dual} + 因果稳定约束 & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
+\hline
+\end{tabular}
+\end{table}
+
+这一判断与迁移基线的表现是相互印证的：在 \texttt{data2} 上，经典最优方法反而采用了 triple-view late fusion。这进一步说明 IR 并非无效，而是其最佳利用方式与模型家族密切相关。
+
+\subsection{因果稳定约束为何有效，真微调为何有害}
+从数值上看，因果稳定约束带来的提升幅度小于 Prompt-Qwen 到显式融合的性能跃迁，但它恰恰对应本文的核心创新点。在冻结式 Qwen 融合框架已经成立的前提下，因果稳定约束仍将 Macro-F1 从 0.8402 提升到 0.8547，将 balanced accuracy 从 0.8422 提升到 0.8556。这说明，在小样本未见工况场景中，单纯保留大模型先验还不够，还需要通过跨工况同标签对齐来抑制工况诱导的伪相关。
+
+真微调实验则给出了一个重要边界条件。若解冻最后两个视觉 block，则 \texttt{data1 official\_cv} 上的 Macro-F1 会从 0.8547 降到 0.7781，在 \texttt{data2 transfer\_test} 上则从 0.6067 降到 0.5808。该结果说明，当前问题并不是大模型先验“适配得还不够”，而是激进微调会破坏原有稳定视觉表征，引发对有限样本和工况特征的过拟合。换言之，因果稳定约束的价值在于提升“轻量适配”的质量，而不是为激进真微调兜底。
+
+\subsection{外部迁移压力测试结果}
+表~\ref{tab:data2_transfer_cn} 展示了 \texttt{data2 transfer\_test} 上的最佳三分类迁移结果。Prompt-Qwen 的 Macro-F1 为 0.4073，经典最优迁移基线为 0.4236，而本文方法达到 0.6067。由于 \texttt{data2} 含有更强的复合分布偏移，因此这一优势比单纯的源域提升更有说服力，它表明因果稳定约束不仅改善了源域条件级泛化，也增强了更强外部迁移场景下的识别稳健性。
+
+\begin{table}[!t]
+\caption{\texttt{data2 transfer\_test} 三分类最佳迁移结果}
+\label{tab:data2_transfer_cn}
+\centering
+\begin{tabular}{|l|c|c|}
+\hline
+家族 / 最佳模型 & Balanced Accuracy & Macro-F1 \\
+\hline
+Prompt-Qwen / \texttt{data1\_official\_cv\_3class\_baseline} & 0.4586 $\pm$ 0.0286 & 0.4073 $\pm$ 0.0511 \\
+\hline
+Classic / triple-view late fusion & 0.4973 $\pm$ 0.0954 & 0.4236 $\pm$ 0.1110 \\
+\hline
+QwenVisFusion / \texttt{rgb\_dual} + 因果稳定约束 & \textbf{0.6359 $\pm$ 0.0158} & \textbf{0.6067 $\pm$ 0.0351} \\
+\hline
+\end{tabular}
+\end{table}
+
+迁移结果也进一步补全了本文的多模态叙事。红外信息在增材制造监测中依然具有物理意义和统计价值 \cite{ref_multisensor_am,ref_multisensor_platform}。当前 Qwen 最优配置选择双 RGB，主要反映的是现有融合结构和样本规模的约束，而不是 IR 在缺陷识别中没有作用。
+
+\begin{figure}[!t]
+\centering
+% TODO: 替换为正式迁移结果图。
+\fbox{\rule{0pt}{1.4in}\rule{0.95\columnwidth}{0pt}}
+\caption{\texttt{data2 transfer\_test} 最佳模型对比占位图。}
+\label{fig:data2_transfer_cn}
+\end{figure}
+
+\section{结论}
+本文围绕一个更贴近工业部署的问题展开研究：在严格条件级划分和更强外部迁移压力下，如何利用大模型先验实现 SLM 多模态缺陷的稳定识别。基于仓库正式实验结果，本文表明直接 Prompt-Qwen 路线并不适合当前小样本未见工况任务。相比之下，将 Qwen2-VL 作为视觉先验编码器，结合显式多模态融合与因果稳定约束，能够在主协议和外部迁移测试上同时取得最优表现。进一步地，真微调实验说明，当前更有效的路径不是继续激进解冻视觉主干，而是保留强先验、通过因果稳定约束提升表示质量。后续工作可进一步探索面向 IR 热特征的更细粒度融合机制，以及比直接解冻更温和的视觉侧 adapter/LoRA 方案。
+
+\begin{thebibliography}{00}
+\bibitem{ref_pbf_review}
+C.~Chua, Y.~Liu, R.~J.~Williams, C.~K.~Chua, and S.~L.~Sing, ``In-process and post-process strategies for part quality assessment in metal powder bed fusion: A review,'' \emph{Journal of Manufacturing Systems}, vol.~73, pp.~75--105, Apr.~2024, doi: 10.1016/j.jmsy.2024.01.004.
+
+\bibitem{ref_optical_defect}
+M.~Abdelrahman, E.~W.~Reutzel, A.~R.~Nassar, and T.~L.~Starr, ``Flaw detection in powder bed fusion using optical imaging,'' \emph{Additive Manufacturing}, vol.~15, pp.~1--11, May~2017, doi: 10.1016/j.addma.2017.02.001.
+
+\bibitem{ref_ir_defect}
+J.~L.~Bartlett, F.~M.~Heim, Y.~V.~Murty, and X.~Li, ``In situ defect detection in selective laser melting via full-field infrared thermography,'' \emph{Additive Manufacturing}, vol.~24, pp.~595--605, Dec.~2018, doi: 10.1016/j.addma.2018.10.045.
+
+\bibitem{ref_multisensor_am}
+J.~Petrich, Z.~Snow, D.~Corbin, and E.~W.~Reutzel, ``Multi-modal sensor fusion with machine learning for data-driven process monitoring for additive manufacturing,'' \emph{Additive Manufacturing}, vol.~48, part~B, Art.~no.~102364, Dec.~2021, doi: 10.1016/j.addma.2021.102364.
+
+\bibitem{ref_multisensor_platform}
+C.~Maucher, K.~T.~Werkle, and H.-C.~M\"ohring, ``In-Situ defect detection and monitoring for laser powder bed fusion using a multi-sensor build platform,'' \emph{Procedia CIRP}, vol.~104, pp.~146--151, 2021, doi: 10.1016/j.procir.2021.11.025.
+
+\bibitem{ref_qwen2vl}
+P.~Wang \emph{et al.}, ``Qwen2-VL: Enhancing vision-language model's perception of the world at any resolution,'' arXiv:2409.12191, 2024, doi: 10.48550/arXiv.2409.12191.
+
+\bibitem{ref_irm}
+M.~Arjovsky, L.~Bottou, I.~Gulrajani, and D.~Lopez-Paz, ``Invariant risk minimization,'' arXiv:1907.02893, 2019, doi: 10.48550/arXiv.1907.02893.
+
+\bibitem{ref_groupdro}
+S.~Sagawa, P.~W.~Koh, T.~B.~Hashimoto, and P.~Liang, ``Distributionally robust neural networks for group shifts: On the importance of regularization for worst-case generalization,'' arXiv:1911.08731, 2019, doi: 10.48550/arXiv.1911.08731.
+\end{thebibliography}
+
+\end{document}

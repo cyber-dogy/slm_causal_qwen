@@ -1,0 +1,22 @@
+# -*- coding: utf-8 -*-
+
+# Part 1: Section 3.1 and 3.2
+part1 = """
+\\\\section{未见工况任务形式化}
+
+本节对未见工况下的 SLM 多模态缺陷识别任务进行形式化定义，为后续方法阐述奠定基础。
+
+\\\\subsection{问题定义}
+
+设训练集 $\\\\mathcal{D}_{\\\\text{train}} = \\\\{(\\\\mathbf{x}_i, y_i, c_i)\\\\}_{i=1}^{N_{\\\\text{train}}}$ 和测试集 $\\\\mathcal{D}_{\\\\text{test}} = \\\\{(\\\\mathbf{x}_j, y_j, c_j)\\\\}_{j=1}^{N_{\\\\text{test}}}$，其中每个样本 $i$ 包含以下要素：
+\\\\begin{itemize}
+    \\\\item 输入模态集合 $\\\\mathcal{M}_i \\\\subseteq \\\\{\\\\text{rgb1}, \\\\text{rgb2}, \\\\text{ir}\\\\}$，表示该样本包含的模态类型；
+    \\\\item 工况标识 $c_i \\\\in \\\\mathcal{C}$，其中 $\\\\mathcal{C}$ 为所有工况的集合；
+    \\\\item 缺陷标签 $y_i \\\\in \\\\mathcal{Y} = \\\\{\\\\text{normal}, \\\\text{HEW}, \\\\text{LEL}\\\\}$，分别为正常、匙孔缺陷（Higher Energy Weld）和缺乏熔合缺陷（Lack of Fusion）。
+\\\\end{itemize}
+"""
+
+with open('part1.txt', 'w', encoding='utf-8') as f:
+    f.write(part1.replace('\\\\', '\\'))
+    
+print('Part 1 written')

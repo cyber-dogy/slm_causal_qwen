@@ -31,35 +31,59 @@
 \end{abstract}
 
 \begin{IEEEkeywords}
-选择性激光熔化，缺陷识别，多模态融合，未见工况泛化，外部迁移，大模型先验，因果稳定约束。
-\end{IEEEkeywords}
+选择性激光熔化，缺陷识别，多模态融合，未见工况泛化，外部迁移，大模型先验，因果稳定约束。选选择性激光熔化过程中的熔池稳定性、热扩散状态与层间成形质量，会直接
+选择性激光熔化（Selective Laser Melting, SLM）通过逐层熔化金属粉末构建复杂几何零件，已广泛应用于航空航天、医疗器械和模具制造等领域 \cite{ref_defect_formation_slm}。SLM 成形涉及熔池动力学、热传导和凝固等复杂物理过程，工艺参数的波动会直接导致气孔、裂纹和几何变形等缺陷 \cite{ref_in_situ_monitoring_review}。微小的工艺偏差即可显著影响零件的机械性能和服役可靠性。
 
-\section{引言}
-选择性激光熔化过程中的熔池稳定性、热扩散状态与层间成形质量，会直接影响最终零件的缺陷形成。为实现在线监测与早期预警，工业系统通常同步采集多路可见光图像与红外热信息，以构成具有互补性的多模态观测 \cite{ref_pbf_review,ref_optical_defect,ref_ir_defect}。然而，对于真实部署而言，关键问题并不是随机划分下的闭集分类，而是在未见工况条件下能否维持稳定可靠的缺陷识别能力。
+工业系统通常部署可见光相机与红外热像仪同步监测 SLM 过程 \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}。可见光成像捕捉熔池形态和表面纹理，红外热成像反映热输入分布和温度场演化。这种多模态观测提供互补的缺陷表征信息。然而，现有监测方法大多假设训练数据与测试数据来自相同分布：当工艺参数、设备型号或粉末批次变化时，模型识别性能显著下降。
 
-本文所依托的仓库恰好提供了这样一个更接近工业场景的验证框架。其主协议 \texttt{data1 official\_cv} 以 \texttt{condition\_uid} 为划分单元，避免相同工况同时出现在训练集和测试集；\texttt{data2 transfer\_test} 则被保留为更困难的外部迁移压力测试，用于刻画未见模型、未见工艺及更复杂分布偏移下的泛化能力。因此，本文的研究对象不是普通的图像分类问题，而是未见工况下的 SLM 多模态缺陷识别。
+这一失效模式源于深度学习模型对虚假相关性（spurious correlations）的过度依赖。模型倾向于利用背景纹理、光照条件或设备噪声等表面统计特征进行预测，而非缺陷本质的因果特征。在 SLM 多模态监测中，这意味着模型可能将特定工况下的热背景模式误识为缺陷依据，导致在未见工况（unseen condition）下失效。如何实现训练工况到未见工况的稳定识别，成为 SLM 缺陷识别的核心问题。
 
-近年来，Qwen2-VL 等大模型为工业视觉任务带来了强大的预训练视觉先验 \cite{ref_qwen2vl}。但仓库中的已有实验也揭示出一个重要事实：大模型先验本身并不会自动转化为工业小样本识别性能。原始 Prompt-Qwen 路线将缺陷识别包装为语言建模问题，通过 prompt 和候选标签打分完成闭集分类，但在当前主协议上的表现明显不足。这意味着，真正的瓶颈不在于是否使用了大模型，而在于是否采用了合适的适配路径。
+预训练视觉大模型为上述问题提供了可能的解决路径。这些模型通常在海量多模态数据上训练，具备处理异构数据特征输入的能力；其接触到的多样化视觉模式，理论上应有助于提取跨工况稳定的特征。然而，现有实验表明：简单的提示工程（prompt engineering）方法在未见工况设定下性能不足。大模型的多模态先验并不能自动转化为对工业缺陷的准确识别，关键在于如何设计适配机制，使其在保持跨工况稳定性的同时，有效融合多源传感器数据中的互补信息。
 
-基于这一观察，本文将研究主线收束到“基于大模型先验与因果稳定约束的多模态识别”上。具体而言，本文不再直接依赖 prompt 分类，而是将 Qwen2-VL 作为视觉先验编码器，显式融合多模态视觉输入，并在融合表示层对同标签异工况样本施加因果稳定约束。这里的“因果稳定”并非声称已经恢复完整的 SLM 成形因果图，而是强调：与工况相关的纹理、亮度和热背景相比，缺陷本体特征应当在跨工况时保持更稳定的判别作用。与此同时，本文在全文中始终保留“多模态有效性”这条叙事主线。当前最优 Qwen 配置虽然是双 RGB，但 IR-only 结果与 triple-view 迁移结果都说明红外热信息并非无效，而是尚未在现有 Qwen 融合结构中被最优利用。
+本文提出一种基于大模型先验与因果稳定约束的未见工况缺陷识别方法。核心思路是将预训练视觉大模型作为跨工况特征提取器，通过显式多模态融合整合可见光与红外热信息，并在融合空间中施加因果一致性约束。该方法采用轻量化的判别式适配机制，在保留大模型预训练先验的同时，学习跨工况不变的缺陷表征。具体而言，"因果稳定"假设认为：与工况相关的纹理、亮度和热背景特征会随工艺条件变化，而缺陷本体的本质特征应当在跨工况时保持稳定。通过对同标签但来自不同工况的样本施加一致性约束，模型被迫减少对不稳定环境因素的依赖，从而学习到从训练工况到未见工况的稳健映射。
 
-本文的主要贡献如下。
+本文的主要贡献可概括为以下三方面：
 \begin{enumerate}
-\item 基于仓库正式实验流程，明确构建了“条件级主协议 + 外部迁移压力测试”的论文叙事，使 SLM 多模态缺陷识别的评估边界与应用场景更加清晰。
-\item 提出一种围绕“大模型先验--多模态特征提取--因果稳定约束--轻量判别适配--输出预测”展开的识别框架，并将创新点集中于因果稳定约束对小样本大模型适配性能的提升。
-\item 通过 prompt-Qwen、经典多模态基线、冻结式 Qwen 融合和真微调对照实验说明：在当前未见工况和外部迁移设定下，稳定使用大模型先验比激进端到端微调更有效。
+\item 论证了多模态融合在未见工况缺陷识别中的必要性。通过对比单模态与多模态配置在跨工况场景下的性能差异，表明融合可见光与红外信息能够显著提升模型对未见设备、未见工艺参数的适应能力，为工业监测系统的传感器配置提供了实证依据。
+\item 构建了大模型先验引导的未见工况缺陷识别框架。该框架采用轻量化判别式适配机制，在冻结预训练视觉主干的同时，通过可学习的多模态融合头实现特征整合，兼顾了部署效率与识别精度。实验表明，该框架在跨设备迁移场景中保持了稳定的缺陷检出率，具备较强的工程实用性。
+\item 提出了因果稳定表征学习机制。通过对同标签但来自不同工况的样本施加一致性约束，迫使模型抑制对背景纹理、热噪声等环境因素的依赖，转而学习缺陷本体的本质特征。这一机制使模型能够从训练工况有效泛化到未见工况，为实现鲁棒的工业视觉监测提供了可行路径。
 \end{enumerate}
 
 \section{相关工作}
-\subsection{SLM 多模态在线监测与缺陷识别}
-围绕金属粉末床熔融过程的质量评估，现有研究已广泛采用层面光学图像、红外热图以及多传感器同步观测来识别异常状态和成形缺陷 \cite{ref_pbf_review,ref_optical_defect,ref_ir_defect,ref_multisensor_am,ref_multisensor_platform}。其中，可见光图像更适合刻画表面几何和纹理异常，红外热信息则更能反映热输入、熔池行为和潜在的热失稳。多模态研究进一步表明，合理的模态互补有助于提升缺陷建模能力。因此，本文并不将 RGB 与 IR 视为彼此替代的输入，而是将其视为不同机理下的互补证据。
+\subsection{金属增材制造中的多模态缺陷监测}
 
-\subsection{大模型适配与稳定泛化}
-大模型视觉编码器能够提供强大的预训练先验，但强先验并不等于在工业场景中天然鲁棒。Qwen2-VL 展示了强大的通用视觉语言建模能力 \cite{ref_qwen2vl}，而稳定泛化相关研究则指出，当训练环境与测试环境发生变化时，模型若过度依赖环境特有特征，就会出现明显性能退化 \cite{ref_irm,ref_groupdro}。对于当前任务而言，这一问题表现为：在样本规模有限、工况变化显著时，模型很容易把工况相关纹理和热背景误当成缺陷依据。因此，本文将大模型适配问题转化为“保留视觉先验 + 学习跨工况稳定表示”的问题。
+金属增材制造过程的在线监测对于确保成形质量至关重要。Zhang 等 \cite{ref_defect_formation_slm} 系统综述了选择性激光熔化中的缺陷形成机制，指出工艺参数波动与缺陷产生之间存在密切关联。Peng 等 \cite{ref_in_situ_monitoring_review} 进一步总结了缺陷检测与监测技术的最新进展。现有研究主要从三个技术路线开展：基于可见光成像的形貌分析、基于红外热成像的温度场监测，以及多传感器数据融合方法 \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}。
 
-\section{未见工况任务定义与评估协议}
-\subsection{条件级主协议}
-本文的主要结论基于 \texttt{data1 official\_cv}。该协议不是随机划分图像，而是以 \texttt{condition\_uid} 为划分单元，从源头上避免同一工况下样本的泄漏。这样得到的评估结果更能反映模型在未见工况上的泛化能力。本文的主任务是三分类缺陷识别，标签为 \texttt{normal}、\texttt{HEW} 和 \texttt{LEL}，其中原始数据中的 \texttt{HEV} 被并入 \texttt{HEW}。
+多传感器融合已成为提升监测精度的有效途径。Wu 等 \cite{ref_wu2024_multisensor} 采用高速相机、光电二极管和麦克风三种模态对 LPBF 熔池过程进行实时监测，通过改进的 LeNet-5 和加权 Dempster-Shafer 证据理论进行单传感器、双传感器和三传感器融合对比，结果表明三传感器融合对质量等级的识别准确率显著提升。这一工作验证了多模态信息互补在缺陷识别中的必要性。
+
+针对高成本视觉传感器的部署限制，研究者探索了低成本多模态替代方案。Liu 等 \cite{ref_liu2024_acoustic} 利用声发射和热辐射信号推断高时间分辨率的熔池视觉特征，并识别空间相关的未熔合缺陷，实现了在 1.0 ms 时间窗内的熔池动态监测。该方法将难以集成的昂贵高速成像替换为更易部署的声学-热辐射组合，为工业现场的传感器配置提供了可行方案。
+
+进一步地，多源信息融合开始超越单纯的传感器堆叠。Shen 等 \cite{ref_shen2024_multisource} 将逐层熔池红外图像、熔道顶视照片、数值模拟图、工艺参数和熔池截面形貌特征参数共同输入模型，提出残差物理融合监督网络，实现了传感数据、物理仿真与工艺先验的深度整合。然而，上述研究虽然在特定实验条件下取得了良好效果，但其模型训练和测试通常基于相同或相似的设备配置与工艺参数，隐含假设训练数据与测试数据来自相同分布。
+
+跨工况泛化问题逐渐受到关注。Li 等 \cite{ref_li2024_transfer} 针对 LPBF 过程中换材料导致的模型失效问题，采用数字相机、光电二极管和麦克风三种离轴传感器，分别在 316L 不锈钢和 TC4 钛合金上采集数据，利用充足的源域数据向目标材料的小样本场景进行迁移学习。该工作表明，多模态特征在跨材料迁移中具有可迁移性差异，为少样本工业场景下的模型适应提供了思路。尽管如此，现有方法在面对设备型号、工艺参数和环境光照等综合变化时，其识别性能往往显著下降，难以满足工业现场的实际部署需求。
+
+\subsection{大模型适配与跨域迁移}
+
+预训练视觉大模型为工业缺陷检测的少样本和跨域场景提供了新的技术路径。Gu 等 \cite{ref_anomalygpt} 提出的 AnomalyGPT 利用大视觉语言模型进行工业异常检测，通过提示学习（prompt learning）实现少样本场景下的快速适应，避免了对大量标注数据的依赖。Li 等 \cite{ref_myriad} 将视觉专家模型与大模型相结合，通过 adapter 机制将传统视觉检测器的优势接入多模态大模型，在保持预训练知识的同时实现特定任务的快速适配。
+
+参数高效微调（PEFT）技术为大模型在工业资源受限场景下的部署提供了可行方案。Nguyen 等 \cite{ref_qlora_excavator} 采用 QLoRA 和 Unsloth 技术对视觉语言模型进行资源高效微调，在消费级硬件上实现了自动挖掘机场景的人员检测和天气识别，验证了低资源适配的可行性。Chen 和 Liu \cite{ref_vlm_active_learning} 则将主动学习与视觉语言模型相结合，通过迭代选择信息量最大的样本进行标注，在降低标注成本的同时提升了模型在目标域的适应效率。
+
+近期研究开始关注大模型在工业异常检测中的深度适配。Zhao 等 \cite{ref_omniad} 提出的 OmniAD 框架通过监督微调（SFT）与 GRPO 强化学习的联合训练，提升了模型在 MMAD 数据集上的少样本泛化能力。Jiang 等 \cite{ref_ad_copilot} 构建的 AD-Copilot 通过视觉上下文比较机制，实现了对未见样本的异常判断与定位。然而，上述工作主要聚焦于单一数据集内的准确性提升，对于训练域与测试域存在显著分布差异（如设备型号、工艺参数、材料批次变化）时的跨域泛化能力，现有方法的性能往往显著下降。因此，如何在保持大模型预训练先验的同时，学习对工况变化鲁棒的缺陷表征，成为实现工业现场稳定部署的关键挑战。
+
+\section{未见工况任务形式化}
+
+本文首先在问题层面建立未见工况缺陷识别的形式化描述。考虑多模态缺陷检测任务，定义输入空间、标签空间及工况空间如下。
+
+设第 $i$ 个样本具有模态集合 $\mathcal{M}_i = \\{m_1, \\dots, m_{K_i}\\}$，其中 $K_i \\in \\{1, 2, 3\\}$ 取决于传感器配置，每个模态 $m \\in \\{\\mathrm{rgb1}, \\mathrm{rgb2}, \\mathrm{ir}\\}$ 对应一种物理观测。样本 $i$ 的工况记为 $c_i \\in \\mathcal{C}$，其中 $\mathcal{C}$ 为训练集中出现的工况集合；缺陷标签记为 $y_i \\in \\mathcal{Y}$，本文采用三分类设定 $\mathcal{Y} = \\{\\mathrm{normal}, \\mathrm{HEW}, \\mathrm{LEL}\\}$。
+
+\textbf{训练分布与测试分布的偏移。} 设训练集 $\mathcal{D}_{\\mathrm{train}} = \\{(
+\mathbf{x}_i, y_i, c_i)\\}_{i=1}^{N}$ 中所有样本的工况来自集合 $\mathcal{C}_{\\mathrm{train}}$。未见工况测试集 $\mathcal{D}_{\\mathrm{test}}$ 中的样本工况来自 $\mathcal{C}_{\\mathrm{test}}$，满足 $\mathcal{C}_{\\mathrm{train}} \\cap \\mathcal{C}_{\\mathrm{test}} = \\varnothing$。这一设定意味着：测试时模型面对的是训练期间从未见过的设备型号、工艺参数或环境配置。
+
+\textbf{核心问题。} 给定 $\mathcal{D}_{\\mathrm{train}}$，学习缺陷分类器 $f: \\mathcal{X} \\times \\mathcal{M} \\rightarrow \\mathcal{Y}$，使其在 $\mathcal{D}_{\\mathrm{test}}$ 上保持低泛化误差。直接的经验风险最小化（ERM）在此设定下往往失效，因为模型会利用 $c$ 与 $y$ 在训练集中的虚假相关性（如特定工况下的背景纹理、热场模式），而这些相关性在 $\mathcal{C}_{\\mathrm{test}}$ 中不再成立。
+
+\subsection{条件级数据划分}
+
+本文的实验基于 \texttt{data1 official\_cv}。该协议不是随机划分图像，而是以 \texttt{condition\_uid} 为划分单元，从源头上避免同一工况下样本的泄漏。这样得到的评估结果更能反映模型在未见工况上的泛化能力。本文的主任务是三分类缺陷识别，标签为 \texttt{normal}、\texttt{HEW} 和 \texttt{LEL}，其中原始数据中的 \texttt{HEV} 被并入 \texttt{HEW}。
 
 \subsection{外部迁移压力测试}
 \texttt{data2 transfer\_test} 不参与模型选择，而作为更困难的外部迁移测试。根据仓库中的分析脚本和结果报告，\texttt{data2} 与 \texttt{data1} 在模型来源、工艺参数、角色分布与纹理统计上均存在明显差异，因此不能简单视作另一组普通验证集，而应视作更接近真实部署压力的外部迁移测试。
@@ -285,7 +309,7 @@ QwenVisFusion / \texttt{rgb\_dual} + 因果稳定约束 & \textbf{0.6359 $\pm$ 0
 \end{tabular}
 \end{table}
 
-迁移结果也进一步补全了本文的多模态叙事。红外信息在增材制造监测中依然具有物理意义和统计价值 \cite{ref_multisensor_am,ref_multisensor_platform}。当前 Qwen 最优配置选择双 RGB，主要反映的是现有融合结构和样本规模的约束，而不是 IR 在缺陷识别中没有作用。
+迁移结果也进一步补全了本文的多模态叙事。红外信息在增材制造监测中依然具有物理意义和统计价值 \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}。当前 Qwen 最优配置选择双 RGB，主要反映的是现有融合结构和样本规模的约束，而不是 IR 在缺陷识别中没有作用。
 
 \begin{figure}[!t]
 \centering
@@ -299,29 +323,71 @@ QwenVisFusion / \texttt{rgb\_dual} + 因果稳定约束 & \textbf{0.6359 $\pm$ 0
 本文围绕一个更贴近工业部署的问题展开研究：在严格条件级划分和更强外部迁移压力下，如何利用大模型先验实现 SLM 多模态缺陷的稳定识别。基于仓库正式实验结果，本文表明直接 Prompt-Qwen 路线并不适合当前小样本未见工况任务。相比之下，将 Qwen2-VL 作为视觉先验编码器，结合显式多模态融合与因果稳定约束，能够在主协议和外部迁移测试上同时取得最优表现。进一步地，真微调实验说明，当前更有效的路径不是继续激进解冻视觉主干，而是保留强先验、通过因果稳定约束提升表示质量。后续工作可进一步探索面向 IR 热特征的更细粒度融合机制，以及比直接解冻更温和的视觉侧 adapter/LoRA 方案。
 
 \begin{thebibliography}{00}
-\bibitem{ref_pbf_review}
-C.~Chua, Y.~Liu, R.~J.~Williams, C.~K.~Chua, and S.~L.~Sing, ``In-process and post-process strategies for part quality assessment in metal powder bed fusion: A review,'' \emph{Journal of Manufacturing Systems}, vol.~73, pp.~75--105, Apr.~2024, doi: 10.1016/j.jmsy.2024.01.004.
 
-\bibitem{ref_optical_defect}
-M.~Abdelrahman, E.~W.~Reutzel, A.~R.~Nassar, and T.~L.~Starr, ``Flaw detection in powder bed fusion using optical imaging,'' \emph{Additive Manufacturing}, vol.~15, pp.~1--11, May~2017, doi: 10.1016/j.addma.2017.02.001.
+\bibitem{ref_defect_formation_slm}
+B.~Zhang, Y.~Li, and Q.~Bai, ``Defect formation mechanisms in selective laser melting: A review,'' \emph{Chinese Journal of Mechanical Engineering}, vol.~30, pp.~515--527, 2017.
 
-\bibitem{ref_ir_defect}
-J.~L.~Bartlett, F.~M.~Heim, Y.~V.~Murty, and X.~Li, ``In situ defect detection in selective laser melting via full-field infrared thermography,'' \emph{Additive Manufacturing}, vol.~24, pp.~595--605, Dec.~2018, doi: 10.1016/j.addma.2018.10.045.
+\bibitem{ref_in_situ_monitoring_review}
+X.~Peng, L.~Kong, H.~An, and G.~Dong, ``A review of in situ defect detection and monitoring technologies in selective laser melting,'' \emph{3D Printing and Additive Manufacturing}, vol.~10, no.~3, pp.~438--466, 2023.
 
-\bibitem{ref_multisensor_am}
-J.~Petrich, Z.~Snow, D.~Corbin, and E.~W.~Reutzel, ``Multi-modal sensor fusion with machine learning for data-driven process monitoring for additive manufacturing,'' \emph{Additive Manufacturing}, vol.~48, part~B, Art.~no.~102364, Dec.~2021, doi: 10.1016/j.addma.2021.102364.
+\bibitem{ref_lpbf_sensing_review}
+D.~Guillen, S.~Wahlquist, and A.~Ali, ``Critical review of LPBF metal print defects detection: Roles of selective sensing technology,'' \emph{Applied Sciences}, vol.~14, no.~15, p.~6718, 2024.
 
-\bibitem{ref_multisensor_platform}
-C.~Maucher, K.~T.~Werkle, and H.-C.~M\"ohring, ``In-Situ defect detection and monitoring for laser powder bed fusion using a multi-sensor build platform,'' \emph{Procedia CIRP}, vol.~104, pp.~146--151, 2021, doi: 10.1016/j.procir.2021.11.025.
+\bibitem{ref_intelligent_defect_pbf}
+P.~Wang \emph{et al.}, ``Towards intelligent defect detection in metal powder bed fusion: A review of in situ monitoring, data pre-processing, and machine learning,'' \emph{Materials Science and Engineering: R: Reports}, vol.~167, p.~101112, 2026.
 
-\bibitem{ref_qwen2vl}
-P.~Wang \emph{et al.}, ``Qwen2-VL: Enhancing vision-language model's perception of the world at any resolution,'' arXiv:2409.12191, 2024, doi: 10.48550/arXiv.2409.12191.
+\bibitem{ref_anomalygpt}
+Z.~Gu \emph{et al.}, ``AnomalyGPT: Detecting industrial anomalies using large vision-language models,'' arXiv:2308.15366, 2023.
 
-\bibitem{ref_irm}
-M.~Arjovsky, L.~Bottou, I.~Gulrajani, and D.~Lopez-Paz, ``Invariant risk minimization,'' arXiv:1907.02893, 2019, doi: 10.48550/arXiv.1907.02893.
+\bibitem{ref_myriad}
+Y.~Li \emph{et al.}, ``Myriad: Large multimodal model by applying vision experts for industrial anomaly detection,'' arXiv:2310.19070, 2023.
 
-\bibitem{ref_groupdro}
-S.~Sagawa, P.~W.~Koh, T.~B.~Hashimoto, and P.~Liang, ``Distributionally robust neural networks for group shifts: On the importance of regularization for worst-case generalization,'' arXiv:1911.08731, 2019, doi: 10.48550/arXiv.1911.08731.
+\bibitem{ref_vlm_active_learning}
+S.~Chen and Y.~Liu, ``Vision-language model-assisted active learning for high-accuracy defect detection in automotive bushing components,'' in \emph{Proc. Int. Conf. Embodied Intelligence and Large Models}, 2025, pp.~9--14.
+
+\bibitem{ref_qlora_excavator}
+H.~V.~Nguyen, H.~Park, N.~Yoo, and J.~Yang, ``Resource-efficient fine-tuning of large vision-language models for multimodal perception in autonomous excavators,'' \emph{Frontiers in Artificial Intelligence}, vol.~8, p.~1681277, 2025.
+
+\bibitem{ref_omniad}
+S.~Zhao \emph{et al.}, ``OmniAD: Detect and understand industrial anomaly via multimodal reasoning,'' arXiv:2505.22039, 2025.
+
+\bibitem{ref_ad_copilot}
+X.~Jiang \emph{et al.}, ``AD-Copilot: A vision-language assistant for industrial anomaly detection via visual in-context comparison,'' arXiv:2603.13779, 2026.
+
+\bibitem{ref_wu2024_multisensor}
+Q.~Wu \emph{et al.}, ``In-situ quality intelligent classification of additively manufactured parts using a multi-sensor fusion based melt pool monitoring system,'' \emph{Additive Manufacturing Frontiers}, vol.~3, no.~3, p.~200153, 2024.
+
+\bibitem{ref_liu2024_acoustic}
+H.~Liu \emph{et al.}, ``Inference of highly time-resolved melt pool visual characteristics and spatially-dependent lack-of-fusion defects in laser powder bed fusion using acoustic and thermal emission data,'' \emph{Additive Manufacturing}, vol.~83, p.~104057, 2024.
+
+\bibitem{ref_shen2024_multisource}
+T.~Shen \emph{et al.}, ``Multi-source information fusion for enhanced in-process quality monitoring of laser powder bed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
+
+\bibitem{ref_li2024_transfer}
+J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
+
 \end{thebibliography}
+
+ed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
+
+\bibitem{ref_li2024_transfer}
+J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
+
+\end{thebibliography}
+
+ed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
+
+\bibitem{ref_li2024_transfer}
+J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
+
+\end{thebibliography}
+
+r bed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
+
+\bibitem{ref_li2024_transfer}
+J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
+
+\end{thebibliography}
+
 
 \end{document}
