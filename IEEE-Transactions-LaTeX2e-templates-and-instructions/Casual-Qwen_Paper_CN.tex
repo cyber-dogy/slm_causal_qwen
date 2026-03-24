@@ -1,6 +1,12 @@
 \documentclass[lettersize,journal]{IEEEtran}
-\usepackage[UTF8]{ctex}
-\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{silence}
+\WarningFilter{latex}{Font shape}
+\WarningFilter{latexfont}{Font shape}
+\WarningFilter{fontspec}{Font}
+\usepackage[UTF8,fontset=fandol]{ctex}
+\usepackage{amsmath,amssymb}
+\usepackage{newtxmath}
+\usepackage{newtxtext}
 \usepackage{algorithmic}
 \usepackage{array}
 \usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
@@ -31,7 +37,10 @@
 \end{abstract}
 
 \begin{IEEEkeywords}
-选择性激光熔化，缺陷识别，多模态融合，未见工况泛化，外部迁移，大模型先验，因果稳定约束。选选择性激光熔化过程中的熔池稳定性、热扩散状态与层间成形质量，会直接
+选择性激光熔化，缺陷识别，多模态融合，未见工况泛化，外部迁移，大模型先验，因果稳定约束。
+\end{IEEEkeywords}
+
+\section{引言}
 选择性激光熔化（Selective Laser Melting, SLM）通过逐层熔化金属粉末构建复杂几何零件，已广泛应用于航空航天、医疗器械和模具制造等领域 \cite{ref_defect_formation_slm}。SLM 成形涉及熔池动力学、热传导和凝固等复杂物理过程，工艺参数的波动会直接导致气孔、裂纹和几何变形等缺陷 \cite{ref_in_situ_monitoring_review}。微小的工艺偏差即可显著影响零件的机械性能和服役可靠性。
 
 工业系统通常部署可见光相机与红外热像仪同步监测 SLM 过程 \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}。可见光成像捕捉熔池形态和表面纹理，红外热成像反映热输入分布和温度场演化。这种多模态观测提供互补的缺陷表征信息。然而，现有监测方法大多假设训练数据与测试数据来自相同分布：当工艺参数、设备型号或粉末批次变化时，模型识别性能显著下降。
@@ -367,27 +376,5 @@ T.~Shen \emph{et al.}, ``Multi-source information fusion for enhanced in-process
 J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
 
 \end{thebibliography}
-
-ed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
-
-\bibitem{ref_li2024_transfer}
-J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
-
-\end{thebibliography}
-
-ed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
-
-\bibitem{ref_li2024_transfer}
-J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
-
-\end{thebibliography}
-
-r bed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
-
-\bibitem{ref_li2024_transfer}
-J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
-
-\end{thebibliography}
-
 
 \end{document}
