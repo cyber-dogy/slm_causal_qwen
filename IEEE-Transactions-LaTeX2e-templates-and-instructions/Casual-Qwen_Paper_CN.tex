@@ -84,93 +84,96 @@
 
 近期研究开始探索更深层次的适配策略。Zhao 等 \cite{ref_omniad} 提出的 OmniAD 框架通过监督微调（SFT）与 GRPO 强化学习的联合训练，提升了模型在 MMAD 数据集上的少样本泛化能力。Jiang 等 \cite{ref_ad_copilot} 构建的 AD-Copilot 通过视觉上下文比较机制，实现了对未见样本的异常判断与定位。然而，上述工作主要聚焦于单一数据集内的准确性提升，对于训练域与测试域存在显著分布差异（如设备型号、工艺参数、材料批次变化）时的跨域泛化能力，现有方法的性能往往显著下降。因此，如何在保持大模型预训练先验的同时，学习对工况变化鲁棒的缺陷表征，成为实现工业现场稳定部署的关键挑战。
 
-\section{未见工况任务形式化}
-
-本节对金属增材制造缺陷识别中的未见工况泛化问题进行形式化描述。考虑多模态监测场景，设样本 $i$ 具有模态集合 $\mathcal{M}_i=\{1,\dots,K_i\}$，其中 $K_i$ 为模态数量。每个模态 $k\in\mathcal{M}_i$ 对应一种物理传感器观测 $\mathbf{x}_i^{(k)}\in\mathbb{R}^{H\times W\times C}$，缺陷标签记为 $y_i\in\mathcal{Y}$，工况标识记为 $c_i\in\mathcal{C}$。
-
-未见工况泛化的核心特征在于训练分布与测试分布的偏移。具体而言，训练集 $\mathcal{D}_{\mathrm{train}}=\{(\mathbf{x}_i,y_i,c_i)\}_{i=1}^{N}$ 中的样本工况来自集合 $\mathcal{C}_{\mathrm{train}}$，而测试集 $\mathcal{D}_{\mathrm{test}}$ 中的样本工况来自 $\mathcal{C}_{\mathrm{test}}$，两者满足 $\mathcal{C}_{\mathrm{train}}\cap\mathcal{C}_{\mathrm{test}}=\varnothing$。该设定意味着模型在测试阶段面对的是训练期间从未见过的工艺参数、打印任务或材料类型。
-
-在此设定下，学习目标是基于 $\mathcal{D}_{\mathrm{train}}$ 训练分类器 $f:\mathcal{X}\times\mathcal{M}\rightarrow\mathcal{Y}$，使其在 $\mathcal{D}_{\mathrm{test}}$ 上保持低泛化误差。然而，直接经验风险最小化（ERM）在此往往失效。模型倾向于利用训练集中工况 $c$ 与标签 $y$ 的统计相关性（如特定工况下的背景纹理、热场模式）进行预测，而这些相关性在未见工况 $\mathcal{C}_{\mathrm{test}}$ 中不再成立，导致跨域性能显著退化。
-
-解决该问题需要克服三个关键挑战。其一，如何有效融合多源异构传感器数据以提取互补的缺陷表征；其二，如何学习对工况变化鲁棒的稳定特征，抑制对背景纹理等非本质因素的依赖；其三，如何在有限标注数据条件下充分利用预训练大模型的跨域先验知识。后续章节将围绕这三个挑战依次展开。
-
-\section{提出方法}
-
-针对未见工况金属增材制造缺陷识别中“模态异构、工况偏移与样本有限”三者交织的困难，本文提出一种基于大模型视觉先验与因果稳定约束的多模态判别框架。该框架并不直接将 Qwen2-VL 用作提示式闭集分类器，而是将其视觉主干转化为共享特征编码器，在此基础上依次完成多模态表征提取、因果一致性融合以及轻量判别适配。框架整体如图~\ref{fig:framework} 所示。
-
 \begin{figure*}[!t]
 \centering
 \includegraphics[width=0.95\textwidth]{fig1.jpg}
-\caption{本文提出的未见工况缺陷识别框架。整体流程由共享视觉编码、多模态因果一致性融合和大模型先验驱动的轻量判别适配三部分构成。}
+\caption{本文提出的未见工况缺陷识别框架。整体流程由共享视觉编码、多模态因果一致性融合和大模型先验驱动的轻量判别适配三部分构成}
 \label{fig:framework}
 \end{figure*}
 
-设样本 $i$ 的有效模态集合为 $\mathcal{M}_i=\{m_1,\dots,m_{K_i}\}$，其中 $K_i\in\{1,2,3\}$，对应 RGB view 1、RGB view 2 与 IR 三类观测。本文方法沿着“共享视觉编码 $\rightarrow$ 因果一致性融合 $\rightarrow$ 判别式适配”的顺序展开：先利用预训练视觉大模型把不同模态映射到统一语义空间，再在融合表示层面对齐同标签异工况样本，最后通过轻量分类头完成缺陷判别。这样的分层设计有两个目的：其一，尽量保留大模型在大规模开放视觉数据上形成的稳定先验；其二，将真正需要任务适配的部分限制在小规模融合头与分类头中，以降低未见工况场景下的过拟合风险。
+\section{未见工况任务形式化}
+
+金属增材制造中的未见工况多模态缺陷识别可以定义为一个条件外推的监督分类问题。对样本 $i$，记其联合观测为 $\mathbf{x}_i=\{\mathbf{x}_i^{(k)}\mid k\in\mathcal{M}_i\}\in\mathcal{X}$，其中 $\mathcal{M}_i$ 表示可用模态集合，对于视觉与红外模态的观测样本，$\mathbf{x}_i^{(k)}\in\mathbb{R}^{H\times W\times C}$ 为第 $k$ 个传感器输入，$y_i\in\mathcal{Y}$ 为缺陷标签，$c_i\in\mathcal{C}$ 为工况标识，$\mathcal{X}$ 表示多模态联合观测空间。工况变量 $c_i$ 用于统一表征设备配置、工艺参数、打印任务和材料状态等会引起观测分布变化的外部因素。与常规同分布分类不同，训练集 $\mathcal{D}_{\mathrm{train}}=\{(\mathbf{x}_i,y_i,c_i)\}_{i=1}^{N}$ 与测试集 $\mathcal{D}_{\mathrm{test}}$ 分别来自工况集合 $\mathcal{C}_{\mathrm{train}}$ 和 $\mathcal{C}_{\mathrm{test}}$，并满足 $\mathcal{C}_{\mathrm{train}}\cap\mathcal{C}_{\mathrm{test}}=\varnothing$。因此，模型在测试阶段面对的不仅是新的样本实例，更是由设备、参数与任务条件整体变化所引起的系统性分布偏移。
+
+在该设定下，模型需要仅基于 $\mathcal{D}_{\mathrm{train}}$ 学习分类函数 $f:\mathcal{X}\rightarrow\mathcal{Y}$，并在未见工况上保持较低风险：
+\begin{equation}
+\mathcal{R}_{\mathrm{uc}}(f)=\mathbb{E}_{(\mathbf{x},y,c)\sim P_{\mathrm{test}}}\left[\ell\!\left(f(\mathbf{x}),y\right)\right], \quad c\in\mathcal{C}_{\mathrm{test}},
+\label{eq:uc_risk}
+\end{equation}
+其中，$\ell(\cdot,\cdot)$ 表示分类损失函数，$\mathcal{R}_{\mathrm{uc}}$ 表示未见工况风险，$P_{\mathrm{test}}$ 表示测试阶段对应的数据分布。该目标之所以困难，在于多模态观测中同时混合了与缺陷形成机理相关的稳定判别因素，以及由工况变化诱导的背景统计和传感器响应差异。直接经验风险最小化（ERM）容易利用后者完成训练集拟合，从而将工况相关的表面相关性误写为决策依据，导致模型在 $\mathcal{C}_{\mathrm{test}}$ 上失效。基于这一任务定义，后续方法将围绕异构观测统一表征、跨工况稳定特征提取和大模型先验迁移三个方面展开。
+
+\section{提出方法}
+
+针对未见工况下金属增材制造多模态缺陷识别中表征难统一、判别依据易随工况漂移且小样本外推能力不足的问题，本文提出一种基于预训练大模型先验与因果稳定约束的多模态判别框架。对样本 $i$，记其有效模态集合为 $\mathcal{M}_i=\{m_1,\dots,m_{K_i}\}$，其中 $K_i$ 表示参与融合的模态数。该框架不将预训练大模型直接用于提示式闭集分类，而是将其视觉编码部分作为共享特征提取器，依次完成多模态表征学习、跨工况一致性融合和轻量判别适配，从而在尽量保留预训练先验的同时抑制工况诱导的表示漂移，学习跨工况稳定的缺陷判别表示。框架整体如图~\ref{fig:framework} 所示。
+
 
 \subsection{多模态特征提取}
 
-未见工况识别的第一个难点在于，不同传感器的成像机制和统计分布并不一致。如果为每个模态分别训练独立编码器，模型容易在有限样本下记住工况相关纹理，而不是缺陷本体特征。基于这一考虑，本文对所有输入模态共享同一个 Qwen2-VL 视觉主干 $f_{\theta_v}$，借助其预训练视觉先验，在统一特征空间中提取视图级语义表示。
+由于不同传感器的成像机制和统计分布并不一致，若为每个模态分别训练独立编码器，模型容易在有限样本下记住工况相关纹理，而不是缺陷本体特征。基于这一考虑，本文对所有输入模态共享同一个预训练大模型视觉编码主干 $f_{\theta_v}$，借助其预训练视觉先验，在统一特征空间中提取模态级语义表示。
 
-对任意模态 $m\in\mathcal{M}_i$，设其输入图像为 $\mathbf{x}_i^{(m)}$。经过 Qwen2-VL 视觉编码器后，可得到空间合并后的视觉 token 序列
+对任意模态 $m\in\mathcal{M}_i$，设其输入观测为 $\mathbf{x}_i^{(m)}$。经过共享视觉编码主干后，可得到由局部视觉特征构成的空间特征序列
 \begin{equation}
-\mathbf{E}_i^{(m)} = f_{\theta_v}\!\left(\mathbf{x}_i^{(m)}\right) \in \mathbb{R}^{P_i^{(m)} \times d_v}, \qquad
-P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2},
-\label{eq:vision_tokens}
+\mathbf{E}_i^{(m)} = f_{\theta_v}\!\left(\mathbf{x}_i^{(m)}\right) \in \mathbb{R}^{P_i^{(m)} \times d_v},
+\label{eq:vision_features}
 \end{equation}
-其中，$d_v$ 表示视觉隐藏维度；在本文采用的 Qwen2-VL-2B-Instruct 中，$d_v=1536$。$(t_i^{(m)}, h_i^{(m)}, w_i^{(m)})$ 为处理器生成的图像网格尺寸，$s$ 为视觉主干配置中的空间合并尺度，故 $P_i^{(m)}$ 表示该模态在 merge 后保留的 token 数。进一步记 $\mathbf{E}_i^{(m)}=[\mathbf{e}_{i,1}^{(m)},\dots,\mathbf{e}_{i,P_i^{(m)}}^{(m)}]^\top$，则 $\mathbf{e}_{i,p}^{(m)}$ 表示第 $p$ 个空间位置对应的局部语义描述。
+\begin{equation}
+P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2}.
+\label{eq:vision_feature_count}
+\end{equation}
+其中，$d_v$ 表示视觉特征维度，$(t_i^{(m)}, h_i^{(m)}, w_i^{(m)})$ 表示该模态输入对应的空间网格尺寸，$s$ 为视觉主干中的空间合并尺度，因此 $P_i^{(m)}$ 表示该模态在空间压缩后保留的局部视觉特征数。进一步记 $\mathbf{E}_i^{(m)}=[\mathbf{e}_{i,1}^{(m)},\dots,\mathbf{e}_{i,P_i^{(m)}}^{(m)}]^\top$，则 $\mathbf{e}_{i,p}^{(m)}$ 表示第 $p$ 个空间位置对应的局部视觉特征。
 
-由于下游融合模块需要紧凑而稳定的视图级输入，本文对每个模态的 token 序列执行均值池化，得到单模态表示
+由于下游融合模块需要紧凑而稳定的模态级输入，本文对每个模态的空间特征序列执行均值池化，得到单模态表示
 \begin{equation}
 \mathbf{z}_i^{(m)} = \frac{1}{P_i^{(m)}} \sum_{p=1}^{P_i^{(m)}} \mathbf{e}_{i,p}^{(m)} \in \mathbb{R}^{d_v}.
 \label{eq:modal_pooling}
 \end{equation}
-式中，$\mathbf{z}_i^{(m)}$ 是模态 $m$ 的全局语义向量。该聚合方式与代码实现保持一致，即先由视觉主干输出 merge 后 token，再对同一视图的 token 做平均，从而把可变长度的空间序列压缩为定长向量。对样本 $i$ 的全部输入模态，最终得到视图级特征组
+式中，$\mathbf{z}_i^{(m)}$ 是模态 $m$ 的全局语义向量。该聚合方式与代码实现保持一致，即先由视觉主干输出空间特征序列，再对同一模态观测的局部视觉特征做平均，从而把可变长度的空间序列压缩为定长向量。对样本 $i$ 的全部输入模态，最终得到模态级特征组
 \begin{equation}
 \mathbf{Z}_i = \left[\mathbf{z}_i^{(m_1)},\dots,\mathbf{z}_i^{(m_{K_i})}\right] \in \mathbb{R}^{K_i \times d_v}.
-\label{eq:view_stack}
+\label{eq:modal_stack}
 \end{equation}
-其中，$K_i$ 表示样本实际包含的视图数。实验主设置采用 $\texttt{rgb\_dual}$ 输入，因此多数情况下 $K_i=2$，对应两路 RGB 视图；在输入消融实验中，$K_i$ 也可退化为 1 或扩展为 3。
+其中，$K_i$ 表示样本实际包含的模态数。对于单模态输入，$K_i=1$；对于视觉模态与红外模态联合输入，$K_i>1$。具体模态组合将在实验部分说明。
 
-需要强调的是，本节并不对 Qwen2-VL 视觉主干做激进端到端微调，而是默认冻结其全部视觉块，仅把它作为共享特征提取器使用。这样做的直接收益是：不同模态在进入融合层之前已经被投影到同一高层语义空间，而训练参数规模仍保持在可控范围内，为后续的因果一致性约束提供了更稳定的表示基础。
+本文并不对共享视觉主干做激进端到端微调，而是默认冻结其全部视觉层，仅将其作为共享特征提取器使用。这样，不同模态在进入融合层之前即可被投影到同一高层语义空间，同时训练参数规模仍保持在可控范围内，从而为后续的因果一致性约束提供更稳定的表示基础。
 
 \begin{figure}[!t]
 \centering
-\fbox{\rule{0pt}{1.55in}\rule{0.92\columnwidth}{0pt}}
-\caption{多模态特征提取模块占位图。定稿时将在此展示共享 Qwen2-VL 视觉主干、视图级 token 聚合与模态输出接口。}
+\includegraphics[width=0.4\textwidth]{fig2.jpg}
+\caption{多模态特征提取模块}
 \label{fig:feature_extractor}
 \end{figure}
 
 \subsection{因果一致性表征融合}
 
-得到各模态的视图级向量后，第二个关键问题变成：如何在保留模态互补性的同时，抑制工况背景对融合表示的污染。若仅做直接拼接再分类，模型虽然能够吸收多模态信息，但同样可能把某一工况特有的亮度模式、热场背景或纹理噪声编码进最终表示。因此，本文在显式融合头之后引入跨工况一致性约束，使融合空间更接近“缺陷语义稳定、工况因素可分离”的目标。
+得到各模态的模态级向量后，若仅将其直接送入分类器，模型仍可能把特定工况下的亮度偏置、热场背景和纹理噪声一并编码为判别依据。因而，这里的关键并不在于构造更复杂的拼接结构，而在于在融合表示层显式约束跨工况稳定因素，使最终表征更多对应缺陷本身而非工况伴随信息。
 
 具体而言，先将样本 $i$ 的多模态向量沿特征维拼接，形成统一输入
 \begin{equation}
 \mathbf{g}_i = \mathrm{Concat}\!\left(\mathbf{z}_i^{(m_1)}, \dots, \mathbf{z}_i^{(m_{K_i})}\right) \in \mathbb{R}^{K_i d_v}.
 \label{eq:concat}
 \end{equation}
-其中，$\mathbf{g}_i$ 保留了不同视图的互补信息，但此时仍然只是简单堆叠的多模态描述。为学习更紧凑的判别表示，本文使用融合头 $\phi_{\theta_f}$ 对其进行归一化和非线性映射：
+其中，$\mathbf{g}_i$ 仅表示不同模态观测的联合描述。为将其映射到可施加一致性约束的统一融合空间，定义
 \begin{equation}
 \mathbf{h}_i = \phi_{\theta_f}\!\left(\mathrm{LN}(\mathbf{g}_i)\right) \in \mathbb{R}^{d_h}.
 \label{eq:fusion}
 \end{equation}
-这里，$\mathrm{LN}(\cdot)$ 表示 LayerNorm，$d_h$ 为融合空间维度，本文取 $d_h=512$。在实现上，$\phi_{\theta_f}$ 由两层 MLP 构成，即 $\mathrm{Linear}(K_i d_v,d_h)\rightarrow \mathrm{GELU}\rightarrow \mathrm{Dropout}(0.1)\rightarrow \mathrm{Linear}(d_h,d_h)\rightarrow \mathrm{GELU}$。该结构对应代码中的 \texttt{MLPFusionHead}，作用是在较小参数量下完成跨模态特征压缩与重组。
+其中，$\mathrm{LN}(\cdot)$ 表示 LayerNorm，$d_h$ 为融合空间维度。融合头 $\phi_{\theta_f}$ 采用低参数的两层感知机实现，其职责仅限于完成跨模态特征压缩与重组；对工况伪相关的抑制并不依赖更深的融合网络，而是通过后续因果一致性约束直接作用于 $\mathbf{h}_i$。
 
-为了在融合空间中施加稳定性约束，本文进一步对融合向量做 $\ell_2$ 归一化：
+因果一致性约束建立在如下假设之上：对于同一缺陷类别，不同工况下的背景纹理、亮度分布和热场响应可以发生变化，但决定类别归属的缺陷形态与异常热特征应保持稳定。为了使这一稳定因素在融合空间中显式可约束，本文首先对融合向量做 $\ell_2$ 归一化：
 \begin{equation}
 \bar{\mathbf{h}}_i = \frac{\mathbf{h}_i}{\|\mathbf{h}_i\|_2} \in \mathcal{S}^{d_h-1}.
 \label{eq:norm}
 \end{equation}
-归一化后的 $\bar{\mathbf{h}}_i$ 仅保留方向信息，便于后续使用余弦相似度刻画跨工况表征的一致性。
+归一化后的 $\bar{\mathbf{h}}_i$ 仅保留方向信息，便于后续使用余弦相似度刻画跨工况表征的一致性。与直接约束特征幅值相比，这种处理更关注不同样本在语义方向上的相对接近关系。
 
-接下来，需要为每个样本构造“同标签、异工况”的参照对象。对样本 $i$，定义其跨工况正样本池为
+在此基础上，为每个样本构造同标签异工况的参照对象。对样本 $i$，定义其跨工况正样本池为
 \begin{equation}
 \Omega_i = \left\{ j \mid j \neq i,\; y_j = y_i,\; c_j \neq c_i \right\}.
 \label{eq:pool}
 \end{equation}
-其中，$y_j = y_i$ 保证两者属于同一缺陷类别，$c_j \neq c_i$ 则强制二者来自不同工况。代码实现中，这一正样本池在数据集加载阶段依据标签和 \texttt{condition\_uid} 预先建立；若某个样本不存在可用正样本，则该样本在当前 batch 中不参与一致性损失计算。
+其中，$y_j = y_i$ 保证两者属于同一缺陷类别，$c_j \neq c_i$ 则强制二者来自不同工况。这样的配对方式避免模型仅在同工况样本之间学习表面相似性，而是要求同一缺陷类别在工况变化下仍保持接近的融合方向。若某个样本不存在可用的跨工况正样本，则该样本在当前 batch 中不参与一致性损失计算。
 
-对于 mini-batch $\mathcal{B}$ 中具有有效正样本的锚点集合 $\mathcal{B}^{+}=\{i\in\mathcal{B}\mid\Omega_i\neq\varnothing\}$，从 $\Omega_i$ 中选取一个正样本 $\pi(i)$，定义因果一致性损失为
+对于当前批量 $\mathcal{B}$ 中具有有效正样本的锚点集合 $\mathcal{B}^{+}=\{i\in\mathcal{B}\mid\Omega_i\neq\varnothing\}$，从 $\Omega_i$ 中选取一个正样本 $\pi(i)$，定义因果一致性损失为
 \begin{equation}
 \mathcal{L}_{\mathrm{cc}} =
 \frac{1}{|\mathcal{B}^{+}|}
@@ -180,27 +183,27 @@ P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2},
 \right),
 \label{eq:cc}
 \end{equation}
-其中，$\sg(\cdot)$ 表示 stop-gradient 算子，用于阻断正样本分支的梯度回传。由于 $\bar{\mathbf{h}}_i$ 和 $\bar{\mathbf{h}}_{\pi(i)}$ 都位于单位超球面上，式~\eqref{eq:cc} 本质上是在最大化同标签异工况样本之间的余弦相似度。换言之，模型被要求把“缺陷类别相同但工况不同”的样本拉近，而不是把工况差异误当作判别依据。
+其中，$\sg(\cdot)$ 表示梯度停止算子，用于阻断参照分支的梯度回传。由于 $\bar{\mathbf{h}}_i$ 和 $\bar{\mathbf{h}}_{\pi(i)}$ 都位于单位超球面上，式~\eqref{eq:cc} 等价于最大化同标签异工况样本之间的余弦相似度。于是，模型被显式要求在融合空间中拉近类别相同而工况不同的样本，使类别语义在跨工况条件下保持一致，并将工况差异排除在主要判别依据之外。
 
-这一设计对应本文的方法假设：真正与标签稳定相关的应是缺陷形态、熔合状态和热异常模式本身，而不是某一特定设备或工艺条件带来的背景统计。因果一致性融合的作用，正是在多模态互补信息已经汇聚的基础上，进一步剥离工况诱导的伪相关，从而为后续分类器提供更鲁棒的融合表示。
+这一设计对应本文的方法假设：真正与标签稳定相关的应是缺陷形态、熔合状态和热异常模式本身，而不是某一特定设备或工艺条件带来的背景统计。因果一致性融合的作用，正是在多模态互补信息已经汇聚的基础上，通过同标签异工况对齐进一步剥离工况诱导的伪相关，从而为后续分类器提供跨工况更稳定的融合表示。
 
 \begin{figure}[!t]
 \centering
-\fbox{\rule{0pt}{1.55in}\rule{0.92\columnwidth}{0pt}}
-\caption{因果一致性融合模块占位图。定稿时将在此展示多模态拼接、MLP 融合头以及同标签异工况对齐机制。}
+\includegraphics[width=0.45\textwidth]{fig3.jpg}
+\caption{因果一致性融合模块}
 \label{fig:causal_fusion}
 \end{figure}
 
 \subsection{大模型先验驱动的判别式适配}
 
-在得到经过因果一致性约束的融合表示后，第三个关键问题是如何把大模型先验转化为稳定的任务决策边界。若直接对整个视觉主干进行端到端微调，有限样本极易把预训练获得的开放域视觉先验重写为“少量工况样本上的局部经验”；但若完全不引入可学习判别层，融合表示又难以适应具体的缺陷类别边界。因此，本文采用“冻结主干、轻量适配”的判别式方案，以最小必要参数完成任务特化。
+在得到经过因果一致性约束的融合表示后，仍需进一步将大模型先验转化为稳定的任务决策边界。若直接对整个视觉主干进行端到端微调，有限样本极易把预训练获得的开放域视觉先验改写为少量工况样本上的局部经验；但若完全不引入可学习判别层，融合表示又难以适应具体的缺陷类别边界。因此，本文采用冻结主干、轻量适配的判别式方案，以最小必要参数完成任务特化。
 
 具体地，利用上一节得到的融合向量 $\mathbf{h}_i$ 生成类别 logits：
 \begin{equation}
 \boldsymbol{\ell}_i = \mathbf{W}_c \mathbf{h}_i + \mathbf{b}_c \in \mathbb{R}^{|\mathcal{Y}|},
 \label{eq:logits}
 \end{equation}
-其中，$\mathbf{W}_c \in \mathbb{R}^{|\mathcal{Y}| \times d_h}$ 和 $\mathbf{b}_c \in \mathbb{R}^{|\mathcal{Y}|}$ 分别表示分类头的权重矩阵与偏置向量，$|\mathcal{Y}|=3$ 对应三分类输出。由此可得样本 $i$ 属于各类别的预测概率
+其中，$\mathbf{W}_c \in \mathbb{R}^{|\mathcal{Y}| \times d_h}$ 和 $\mathbf{b}_c \in \mathbb{R}^{|\mathcal{Y}|}$ 分别表示分类头的权重矩阵与偏置向量，$|\mathcal{Y}|=3$ 对应三分类输出。相应地，样本 $i$ 属于各类别的预测概率为
 \begin{equation}
 \hat{\mathbf{y}}_i = \mathrm{softmax}(\boldsymbol{\ell}_i).
 \label{eq:softmax}
@@ -212,7 +215,7 @@ P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2},
 \mathcal{L}_{\mathrm{cls}} = -\frac{1}{|\mathcal{B}|}\sum_{i \in \mathcal{B}} \log \hat{y}_{i,y_i},
 \label{eq:ce}
 \end{equation}
-其中，$|\mathcal{B}|$ 表示 batch 大小，$\hat{y}_{i,y_i}$ 表示样本 $i$ 在真实标签 $y_i$ 上的预测概率。$\mathcal{L}_{\mathrm{cls}}$ 的作用是学习缺陷类别边界，而上一节的 $\mathcal{L}_{\mathrm{cc}}$ 则负责抑制工况诱导的表示漂移；二者分别对应“可分性”和“稳定性”两个目标。
+其中，$|\mathcal{B}|$ 表示 batch 大小，$\hat{y}_{i,y_i}$ 表示样本 $i$ 在真实标签 $y_i$ 上的预测概率。$\mathcal{L}_{\mathrm{cls}}$ 的作用是学习缺陷类别边界，而上一节的 $\mathcal{L}_{\mathrm{cc}}$ 则负责抑制工况诱导的表示漂移；二者分别对应类别可分性与跨工况稳定性两个目标。
 
 围绕大模型先验的保留程度，本文定义两种适配模式：
 \begin{equation}
@@ -220,7 +223,7 @@ P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2},
 \Theta_{\mathrm{ft}} = \{\theta_v^{\mathrm{last2}}, \theta_m, \theta_f, \theta_c\},
 \label{eq:trainable}
 \end{equation}
-其中，$\theta_f$ 表示融合头参数，$\theta_c=(\mathbf{W}_c,\mathbf{b}_c)$ 表示分类头参数，$\theta_v^{\mathrm{last2}}$ 表示 Qwen2-VL 最后两个视觉 block 的参数，$\theta_m$ 表示视觉 merger 参数。$\Theta_{\mathrm{lite}}$ 是本文的主方法，只更新融合头与分类头；$\Theta_{\mathrm{ft}}$ 则作为诊断性对照，在主方法基础上额外解冻最后两层视觉块，用于检验激进微调是否会破坏原有视觉先验。
+其中，$\theta_f$ 表示融合头参数，$\theta_c=(\mathbf{W}_c,\mathbf{b}_c)$ 表示分类头参数，$\theta_v^{\mathrm{last2}}$ 表示视觉编码主干末端两层的参数，$\theta_m$ 表示特征汇聚模块参数。$\Theta_{\mathrm{lite}}$ 是本文的主方法，只更新融合头与分类头；$\Theta_{\mathrm{ft}}$ 则作为诊断性对照，在主方法基础上额外解冻末端视觉层，用于检验激进微调是否会破坏原有视觉先验。
 
 综合以上设计，模型的最终优化目标写为
 \begin{equation}
@@ -238,24 +241,24 @@ P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2},
 
 \subsection{训练流程与整体架构}
 
-训练阶段采用标准 mini-batch 梯度下降，但每一轮更新都严格遵循“共享视觉编码 $\rightarrow$ 多模态融合 $\rightarrow$ 因果一致性对齐 $\rightarrow$ 判别优化”的顺序。对 batch 中的每个样本，模型先按照输入模式组织多视图图像，并由共享 Qwen2-VL 视觉主干提取视图级向量；随后通过融合头得到 $\mathbf{h}_i$ 和 $\bar{\mathbf{h}}_i$，分别用于分类损失与一致性损失计算。若当前 batch 中存在同标签异工况正样本，则额外计算 $\mathcal{L}_{\mathrm{cc}}$；否则仅优化 $\mathcal{L}_{\mathrm{cls}}$。主实验使用 AdamW 优化器与 cosine 学习率调度，在验证集上按 Macro-F1 选择最优 epoch，并配合 early stopping 控制过拟合。
+训练阶段采用标准 mini-batch 梯度下降，但每一轮更新都依次经过共享视觉编码、多模态融合、因果一致性对齐和判别优化四个步骤。对 batch 中的每个样本，模型先按照当前模态组合组织输入观测，并由共享视觉主干提取模态级向量；随后通过融合头得到 $\mathbf{h}_i$ 和 $\bar{\mathbf{h}}_i$，分别用于分类损失与一致性损失计算。若当前 batch 中存在同标签异工况正样本，则额外计算 $\mathcal{L}_{\mathrm{cc}}$；否则仅优化 $\mathcal{L}_{\mathrm{cls}}$。主实验使用 AdamW 优化器与 cosine 学习率调度，在验证集上按 Macro-F1 选择最优 epoch，并配合 early stopping 控制过拟合。
 
-表~\ref{tab:qwen_train_algo} 给出了训练流程的伪代码，表~\ref{tab:qwen_model_arch} 汇总了本文方法的关键结构配置。这两张表分别对应“模型如何训练”和“模型由哪些核心部件构成”，共同构成本文方法章的实现性描述。
+表~\ref{tab:method_train_algo} 给出了训练流程的伪代码，表~\ref{tab:method_model_arch} 汇总了本文方法的关键结构配置。这两张表分别说明模型训练过程和核心组成，共同构成本文方法章的实现性描述。
 
 \begin{table*}[!t]
 \centering
-\caption{QwenVisFusion 训练流程伪代码}
-\label{tab:qwen_train_algo}
+\caption{本文方法训练流程伪代码}
+\label{tab:method_train_algo}
 \begin{minipage}{0.97\textwidth}
 \footnotesize
 \begin{algorithmic}[1]
 \STATE \textbf{输入：}训练集 $\mathcal{D}_{\mathrm{train}}$，验证集 $\mathcal{D}_{\mathrm{val}}$，共享视觉主干 $f_{\theta_v}$，融合头 $\phi_{\theta_f}$，分类头 $(\mathbf{W}_c,\mathbf{b}_c)$，权重系数 $\lambda$
-\STATE \textbf{初始化：}冻结 $f_{\theta_v}$ 的全部视觉块；根据标签和 \texttt{condition\_uid} 为训练样本建立同标签异工况正样本池
+\STATE \textbf{初始化：}冻结 $f_{\theta_v}$ 的全部视觉层；根据标签和 \texttt{condition\_uid} 为训练样本建立同标签异工况正样本池
 \FOR{epoch $=1$ to $E$}
     \FOR{mini-batch $\mathcal{B}$}
-        \STATE 按输入模式读取每个样本的多视图图像，并送入共享 Qwen2-VL 视觉主干
-        \STATE 对每个视图的 merge 后 token 做均值池化，得到视图级向量 $\mathbf{z}_i^{(m)}$
-        \STATE 拼接所有视图向量，经融合头得到 $\mathbf{h}_i$ 及其归一化表示 $\bar{\mathbf{h}}_i$
+        \STATE 按当前模态组合读取每个样本的输入观测，并送入共享视觉主干
+        \STATE 对每个模态的空间特征序列做均值池化，得到模态级向量 $\mathbf{z}_i^{(m)}$
+        \STATE 拼接所有模态向量，经融合头得到 $\mathbf{h}_i$ 及其归一化表示 $\bar{\mathbf{h}}_i$
         \STATE 由分类头计算 logits，并得到分类损失 $\mathcal{L}_{\mathrm{cls}}$
         \IF{batch 中存在有效正样本对}
             \STATE 依据同标签异工况匹配关系计算一致性损失 $\mathcal{L}_{\mathrm{cc}}$
@@ -278,26 +281,26 @@ P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2},
 \begin{table*}[!t]
 \centering
 \caption{本文方法的关键模型结构配置}
-\label{tab:qwen_model_arch}
+\label{tab:method_model_arch}
 \footnotesize
 \begin{tabular}{p{2.7cm}p{3.2cm}p{9.3cm}}
 \toprule
 结构分组 & 模块 & 关键配置与作用 \\
 \midrule
 \multicolumn{3}{l}{\textbf{1. 特征提取结构}} \\
-共享视觉主干 & Qwen2-VL-2B-Instruct visual tower & 所有模态共享同一视觉编码器；视觉隐藏维度 $d_v=1536$；默认冻结全部视觉 block，以保留预训练视觉先验。 \\
-视图级聚合 & Token mean pooling & 对每个视图的 merge 后 token 求平均，输出单视图向量 $\mathbf{z}_i^{(m)} \in \mathbb{R}^{1536}$。 \\
-输入组织 & 多视图模式 & 支持 \texttt{rgb\_view1}、\texttt{rgb\_dual}、\texttt{ir\_only} 与 \texttt{triple\_view}；主实验使用 \texttt{rgb\_dual}。 \\
+共享视觉主干 & 预训练大模型视觉编码器 & 所有模态共享同一视觉编码器；视觉隐藏维度 $d_v=1536$；默认冻结全部视觉层，以保留预训练视觉先验。 \\
+模态级聚合 & 均值池化聚合 & 对每个模态的空间特征序列求平均，输出单模态向量 $\mathbf{z}_i^{(m)} \in \mathbb{R}^{1536}$。 \\
+输入组织 & 多模态组合 & 支持单模态视觉、单模态红外与视觉-红外联合输入等配置；具体组合在实验部分给出。 \\
 \midrule
 \multicolumn{3}{l}{\textbf{2. 因果融合结构}} \\
-特征拼接 & $\mathrm{Concat}$ & 将 $K_i$ 个视图向量拼接为 $\mathbf{g}_i \in \mathbb{R}^{K_i d_v}$，保留多模态互补信息。 \\
-融合头 & LayerNorm + 两层 MLP & $\mathrm{Linear}(K_i d_v,512)\rightarrow \mathrm{GELU}\rightarrow \mathrm{Dropout}(0.1)\rightarrow \mathrm{Linear}(512,512)\rightarrow \mathrm{GELU}$。 \\
-一致性约束 & Cross-condition cosine alignment & 正样本由“同标签、异 \texttt{condition\_uid}”样本构成；通过余弦相似度对齐融合表示，权重 $\lambda=0.1$。 \\
+特征拼接 & $\mathrm{Concat}$ & 将 $K_i$ 个模态向量拼接为 $\mathbf{g}_i \in \mathbb{R}^{K_i d_v}$，保留多模态互补信息。 \\
+融合头 & LayerNorm 与轻量感知机 & 先对 $\mathbf{g}_i$ 做 LayerNorm，再通过两层感知机映射到 512 维融合空间，中间采用 GELU 激活与 Dropout 正则化。 \\
+一致性约束 & 跨工况余弦对齐 & 正样本由同标签且工况不同的样本构成；通过余弦相似度对齐融合表示，权重 $\lambda=0.1$。 \\
 \midrule
 \multicolumn{3}{l}{\textbf{3. 大模型适配结构}} \\
 分类头 & Linear classifier & $\mathrm{Linear}(512,|\mathcal{Y}|)$，输出三分类 logits。 \\
 轻量适配 & 主方法设置 & 仅训练 $\theta_f$ 与 $\theta_c$；批量大小 4；适用于主协议结果与迁移结果。 \\
-诊断性真微调 & Last-2-block 对照 & 额外解冻最后 2 个视觉 block 与 merger；视觉学习率 $2\times 10^{-6}$，融合头学习率 $5\times 10^{-5}$，批量大小 1。 \\
+诊断性真微调 & 末端视觉层对照 & 额外解冻视觉编码主干末端两层与特征汇聚模块；具体学习率与批量大小见实验设置。 \\
 \bottomrule
 \end{tabular}
 \end{table*}
