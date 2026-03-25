@@ -44,5 +44,17 @@ paper_visualization/exports/
 *.log
 *.fdb_latexmk
 *.fls
+*.bbl
+*.blg
+*.out
+*.toc
+*.lof
+*.lot
+*.bcf
+*.run.xml
 *.synctex.gz
 *.synctex(busy)
+*.xdv
+
+# Local paper build outputs
+IEEE-Transactions-LaTeX2e-templates-and-instructions/Casual-Qwen_Paper*.pdf

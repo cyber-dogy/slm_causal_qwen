@@ -1,12 +1,12 @@
-\documentclass[lettersize,journal]{IEEEtran}
-\usepackage{silence}
-\WarningFilter{latex}{Font shape}
+\RequirePackage{silence}
 \WarningFilter{latexfont}{Font shape}
+\WarningFilter{latexfont}{Some font shapes were not available}
 \WarningFilter{fontspec}{Font}
-\usepackage[UTF8,fontset=fandol]{ctex}
+\WarningFilter{latex}{Text page}
+\documentclass[journal]{IEEEtran}
+\usepackage[UTF8,fontset=windows]{ctex}
 \usepackage{amsmath,amssymb}
 \usepackage{newtxmath}
-\usepackage{newtxtext}
 \usepackage{algorithmic}
 \usepackage{booktabs}
 \usepackage{array}
@@ -17,6 +17,12 @@
 \usepackage{verbatim}
 \usepackage{graphicx}
 \usepackage{cite}
+\setmainfont{Times New Roman}
+\setsansfont{Arial}
+\setmonofont{Courier New}
+\hbadness=10000
+\vbadness=10000
+\vfuzz=20pt
 \hyphenation{op-tical net-works semi-conduc-tor IEEE-Xplore}
 
 \newcommand{\sg}{\operatorname{sg}}
@@ -372,6 +378,7 @@ QwenVisFusion Last2 FT & 解冻最后两个视觉 block & 0.7850 $\pm$ 0.0378 & 
 \caption{\texttt{data2 transfer\_test} 三分类最佳迁移结果}
 \label{tab:data2_transfer_cn}
 \centering
+\resizebox{\columnwidth}{!}{
 \begin{tabular}{|l|c|c|}
 \hline
 家族 / 最佳模型 & Balanced Accuracy & Macro-F1 \\
@@ -383,6 +390,7 @@ Classic / triple-view late fusion & 0.4973 $\pm$ 0.0954 & 0.4236 $\pm$ 0.1110 \\
 QwenVisFusion / \texttt{rgb\_dual} + 因果稳定约束 & \textbf{0.6359 $\pm$ 0.0158} & \textbf{0.6067 $\pm$ 0.0351} \\
 \hline
 \end{tabular}
+}
 \end{table}
 
 迁移结果也进一步补全了本文的多模态叙事。红外信息在增材制造监测中依然具有物理意义和统计价值 \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}。当前 Qwen 最优配置选择双 RGB，主要反映的是现有融合结构和样本规模的约束，而不是 IR 在缺陷识别中没有作用。
