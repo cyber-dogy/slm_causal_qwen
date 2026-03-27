@@ -10,6 +10,7 @@
 \usepackage{algorithmic}
 \usepackage{booktabs}
 \usepackage{array}
+\usepackage{multirow}
 \usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
 \usepackage{textcomp}
 \usepackage{stfloats}
@@ -31,7 +32,7 @@
 
 \title{基于大模型先验与因果稳定约束的金属增材制造多模态缺陷识别方法}
 
-\author{作者姓名
+\author{谷俊伟，郭佳辉，王宇
 \thanks{作者单位、基金信息与通讯作者说明将在正式投稿版本中补充。}}
 
 \markboth{IEEE Transactions on Industrial Informatics,~Vol.~XX, No.~XX, Month~2026}%
@@ -103,32 +104,26 @@
 
 \subsection{多模态特征提取}
 
-由于不同传感器的成像机制和统计分布并不一致，若为每个模态分别训练独立编码器，模型容易在有限样本下记住工况相关纹理，而不是缺陷本体特征。基于这一考虑，本文对所有输入模态共享同一个预训练大模型视觉编码主干 $f_{\theta_v}$，借助其预训练视觉先验，在统一特征空间中提取模态级语义表示。
+不同传感器的成像机制和统计分布并不一致。若为各模态分别训练独立编码器，模型容易在有限样本下记住工况相关纹理，而难以提取稳定的缺陷依据。为此，本文对所有输入模态共享同一个预训练大模型视觉编码主干 $f_{\theta_v}$，先将异构观测映射到统一语义空间，再在该空间内构造模态级表示。
 
-对任意模态 $m\in\mathcal{M}_i$，设其输入观测为 $\mathbf{x}_i^{(m)}$。经过共享视觉编码主干后，可得到由局部视觉特征构成的空间特征序列
+对任意模态 $m\in\mathcal{M}_i$，设其输入观测为 $\mathbf{x}_i^{(m)}$。共享视觉编码主干输出该模态的空间特征序列
 \begin{equation}
-\mathbf{E}_i^{(m)} = f_{\theta_v}\!\left(\mathbf{x}_i^{(m)}\right) \in \mathbb{R}^{P_i^{(m)} \times d_v},
+\mathbf{E}_i^{(m)} = f_{\theta_v}\!\left(\mathbf{x}_i^{(m)}\right)
+= \left[\mathbf{e}_{i,1}^{(m)},\dots,\mathbf{e}_{i,P_i^{(m)}}^{(m)}\right]^\top
+\in \mathbb{R}^{P_i^{(m)} \times d_v},
 \label{eq:vision_features}
 \end{equation}
-\begin{equation}
-P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2}.
-\label{eq:vision_feature_count}
-\end{equation}
-其中，$d_v$ 表示视觉特征维度，$(t_i^{(m)}, h_i^{(m)}, w_i^{(m)})$ 表示该模态输入对应的空间网格尺寸，$s$ 为视觉主干中的空间合并尺度，因此 $P_i^{(m)}$ 表示该模态在空间压缩后保留的局部视觉特征数。进一步记 $\mathbf{E}_i^{(m)}=[\mathbf{e}_{i,1}^{(m)},\dots,\mathbf{e}_{i,P_i^{(m)}}^{(m)}]^\top$，则 $\mathbf{e}_{i,p}^{(m)}$ 表示第 $p$ 个空间位置对应的局部视觉特征。
-
-由于下游融合模块需要紧凑而稳定的模态级输入，本文对每个模态的空间特征序列执行均值池化，得到单模态表示
+其中，$d_v$ 表示特征维度，$P_i^{(m)}$ 表示该模态经视觉主干空间压缩后保留的局部特征数，$\mathbf{e}_{i,p}^{(m)}$ 表示第 $p$ 个空间位置对应的局部视觉特征。由于后续融合需要定长输入，本文对空间特征序列执行均值池化，得到单模态表示
 \begin{equation}
 \mathbf{z}_i^{(m)} = \frac{1}{P_i^{(m)}} \sum_{p=1}^{P_i^{(m)}} \mathbf{e}_{i,p}^{(m)} \in \mathbb{R}^{d_v}.
 \label{eq:modal_pooling}
 \end{equation}
-式中，$\mathbf{z}_i^{(m)}$ 是模态 $m$ 的全局语义向量。该聚合方式与代码实现保持一致，即先由视觉主干输出空间特征序列，再对同一模态观测的局部视觉特征做平均，从而把可变长度的空间序列压缩为定长向量。对样本 $i$ 的全部输入模态，最终得到模态级特征组
+式中，$\mathbf{z}_i^{(m)}$ 是模态 $m$ 的全局语义向量。该操作将可变长度的空间序列压缩为定长向量，从而降低模态间融合的尺度差异。对样本 $i$ 的全部输入模态，最终得到模态级特征组
 \begin{equation}
 \mathbf{Z}_i = \left[\mathbf{z}_i^{(m_1)},\dots,\mathbf{z}_i^{(m_{K_i})}\right] \in \mathbb{R}^{K_i \times d_v}.
 \label{eq:modal_stack}
 \end{equation}
-其中，$K_i$ 表示样本实际包含的模态数。对于单模态输入，$K_i=1$；对于视觉模态与红外模态联合输入，$K_i>1$。具体模态组合将在实验部分说明。
-
-本文并不对共享视觉主干做激进端到端微调，而是默认冻结其全部视觉层，仅将其作为共享特征提取器使用。这样，不同模态在进入融合层之前即可被投影到同一高层语义空间，同时训练参数规模仍保持在可控范围内，从而为后续的因果一致性约束提供更稳定的表示基础。
+其中，$K_i$ 表示样本实际参与融合的模态数。本文默认冻结共享视觉主干，仅将其作为统一特征提取器使用；这样既能保留预训练视觉先验，又能为后续跨工况一致性约束提供更稳定的表示基础。
 
 \begin{figure}[!t]
 \centering
@@ -139,33 +134,33 @@ P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2}.
 
 \subsection{因果一致性表征融合}
 
-得到各模态的模态级向量后，若仅将其直接送入分类器，模型仍可能把特定工况下的亮度偏置、热场背景和纹理噪声一并编码为判别依据。因而，这里的关键并不在于构造更复杂的拼接结构，而在于在融合表示层显式约束跨工况稳定因素，使最终表征更多对应缺陷本身而非工况伴随信息。
+得到各模态的模态级向量后，若直接送入分类器，模型仍可能把亮度偏置、热场背景和纹理噪声一并编码为判别依据。因此，本节的目标不是构造更复杂的融合网络，而是在融合表示层显式约束跨工况稳定因素，使表征更集中于缺陷本身。
 
 具体而言，先将样本 $i$ 的多模态向量沿特征维拼接，形成统一输入
 \begin{equation}
 \mathbf{g}_i = \mathrm{Concat}\!\left(\mathbf{z}_i^{(m_1)}, \dots, \mathbf{z}_i^{(m_{K_i})}\right) \in \mathbb{R}^{K_i d_v}.
 \label{eq:concat}
 \end{equation}
-其中，$\mathbf{g}_i$ 仅表示不同模态观测的联合描述。为将其映射到可施加一致性约束的统一融合空间，定义
+其中，$\mathbf{g}_i$ 表示不同模态观测的联合描述。为将其映射到可施加一致性约束的统一融合空间，定义
 \begin{equation}
 \mathbf{h}_i = \phi_{\theta_f}\!\left(\mathrm{LN}(\mathbf{g}_i)\right) \in \mathbb{R}^{d_h}.
 \label{eq:fusion}
 \end{equation}
-其中，$\mathrm{LN}(\cdot)$ 表示 LayerNorm，$d_h$ 为融合空间维度。融合头 $\phi_{\theta_f}$ 采用低参数的两层感知机实现，其职责仅限于完成跨模态特征压缩与重组；对工况伪相关的抑制并不依赖更深的融合网络，而是通过后续因果一致性约束直接作用于 $\mathbf{h}_i$。
+其中，$\mathrm{LN}(\cdot)$ 表示 LayerNorm，$d_h$ 为融合空间维度。融合头 $\phi_{\theta_f}$ 仅负责完成跨模态特征压缩与重组，而对工况伪相关的抑制主要由后续一致性约束实现。
 
-因果一致性约束建立在如下假设之上：对于同一缺陷类别，不同工况下的背景纹理、亮度分布和热场响应可以发生变化，但决定类别归属的缺陷形态与异常热特征应保持稳定。为了使这一稳定因素在融合空间中显式可约束，本文首先对融合向量做 $\ell_2$ 归一化：
+因果一致性约束建立在如下假设之上：对于同一缺陷类别，不同工况下的背景纹理、亮度分布和热场响应可以变化，但决定类别归属的缺陷形态与异常热特征应保持稳定。为使这一稳定因素在融合空间中可约束，本文首先对融合向量做 $\ell_2$ 归一化：
 \begin{equation}
 \bar{\mathbf{h}}_i = \frac{\mathbf{h}_i}{\|\mathbf{h}_i\|_2} \in \mathcal{S}^{d_h-1}.
 \label{eq:norm}
 \end{equation}
-归一化后的 $\bar{\mathbf{h}}_i$ 仅保留方向信息，便于后续以余弦相似度刻画融合表征的跨工况一致性。与直接约束特征幅值相比，这种处理更关注不同样本在缺陷语义上的相对接近关系。
+归一化后的 $\bar{\mathbf{h}}_i$ 仅保留方向信息，因此后续内积可直接刻画余弦相似度，更适合衡量不同工况下缺陷语义的一致程度。
 
 在此基础上，为每个样本构造同标签异工况的参照对象。对样本 $i$，定义其跨工况正样本池为
 \begin{equation}
 \Omega_i = \left\{ j \mid j \neq i,\; y_j = y_i,\; c_j \neq c_i \right\}.
 \label{eq:pool}
 \end{equation}
-其中，$y_j = y_i$ 保证两者属于同一缺陷类别，$c_j \neq c_i$ 则强制二者来自不同工况。这样的配对方式避免模型仅在同工况样本之间学习表面相似性，而是要求同一缺陷类别在工况变化下仍保持接近的融合表征。应当指出，这里的因果一致性约束作用于样本 $i$ 与其同标签异工况正样本之间的融合表示，而非不同模态之间的直接对齐。若某个样本不存在可用的跨工况正样本，则该样本在当前 batch 中不参与一致性损失计算。
+其中，$y_j = y_i$ 保证两者属于同一缺陷类别，$c_j \neq c_i$ 保证二者来自不同工况。这样得到的约束对象是样本级跨工况正样本对，而非不同模态之间的直接对齐。若某个样本不存在可用正样本，则该样本在当前 batch 中不参与一致性损失计算。
 
 对于当前批量 $\mathcal{B}$ 中具有有效正样本的锚点集合 $\mathcal{B}^{+}=\{i\in\mathcal{B}\mid\Omega_i\neq\varnothing\}$，从 $\Omega_i$ 中选取一个正样本 $\pi(i)$，定义因果一致性损失为
 \begin{equation}
@@ -177,9 +172,7 @@ P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2}.
 \right),
 \label{eq:cc}
 \end{equation}
-其中，$\sg(\cdot)$ 表示梯度停止算子，用于阻断参照分支的梯度回传。由于 $\bar{\mathbf{h}}_i$ 和 $\bar{\mathbf{h}}_{\pi(i)}$ 已做归一化处理，二者内积可直接表征其余弦相似度，因此式~\eqref{eq:cc} 实质上是在拉近同标签异工况样本的融合表征，使一致的缺陷语义在不同工况下保持接近，并将工况差异排除在主要判别依据之外。
-
-这一设计对应本文的方法假设：真正与标签稳定相关的应是缺陷形态、熔合状态和热异常模式本身，而不是某一特定设备或工艺条件带来的背景统计。因果一致性融合的作用，正是在多模态互补信息已经汇聚的基础上，通过同标签异工况对齐进一步剥离工况诱导的伪相关，从而为后续分类器提供跨工况更稳定的融合表示。
+其中，$\sg(\cdot)$ 表示梯度停止算子，用于阻断参照分支的梯度回传。由于 $\bar{\mathbf{h}}_i$ 和 $\bar{\mathbf{h}}_{\pi(i)}$ 已归一化，二者内积直接对应余弦相似度。因此，式~\eqref{eq:cc} 的作用就是拉近同标签异工况样本的融合表示，使一致的缺陷语义在不同工况下保持接近，并削弱工况差异对判别边界的干扰。
 
 \begin{figure}[!t]
 \centering
@@ -190,42 +183,36 @@ P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2}.
 
 \subsection{基于大模型泛化先验的轻量适配}
 
-在得到经过因果一致性约束的融合表示后，仍需进一步将预训练大模型在开放域视觉数据上形成的泛化先验迁移到未见工况缺陷识别任务中。若直接对整个视觉主干进行端到端微调，有限样本极易把这种泛化先验改写为少量工况样本上的局部经验；但若完全不进行任务适配，融合表示又难以形成与缺陷类别对应的稳定判别边界。因此，本文在冻结视觉主干的前提下，仅通过轻量融合头与分类头完成任务适配，以尽量保留大模型的泛化能力并提升未见工况下的识别性能。
+在得到融合表示后，仍需将预训练大模型在开放域视觉数据上形成的泛化先验转化为具体的缺陷类别判别能力。若直接对视觉主干进行端到端微调，有限样本容易将这一先验改写为少量工况样本上的局部经验；若完全不做任务适配，融合表示又难以形成稳定的类别边界。因此，本文在冻结视觉主干的前提下，仅更新融合头与分类头，以较小参数代价完成任务适配。
 
-具体地，利用上一节得到的融合向量 $\mathbf{h}_i$ 计算分类得分向量：
+具体地，利用上一节得到的融合向量 $\mathbf{h}_i$ 计算分类得分向量
 \begin{equation}
 \boldsymbol{\ell}_i = \mathbf{W}_c \mathbf{h}_i + \mathbf{b}_c \in \mathbb{R}^{|\mathcal{Y}|},
 \label{eq:scores}
 \end{equation}
-其中，$\mathbf{W}_c \in \mathbb{R}^{|\mathcal{Y}| \times d_h}$ 和 $\mathbf{b}_c \in \mathbb{R}^{|\mathcal{Y}|}$ 分别表示分类头的权重矩阵与偏置向量，$|\mathcal{Y}|$ 表示缺陷识别任务中的类别数。向量 $\boldsymbol{\ell}_i$ 的第 $k$ 个分量表示样本 $i$ 指向第 $k$ 类的未归一化判别得分。相应地，经 softmax 归一化后，样本 $i$ 属于各类别的预测概率为
+其中，$\mathbf{W}_c \in \mathbb{R}^{|\mathcal{Y}| \times d_h}$ 和 $\mathbf{b}_c \in \mathbb{R}^{|\mathcal{Y}|}$ 分别表示分类头的权重矩阵与偏置向量，$|\mathcal{Y}|$ 表示缺陷识别任务中的类别数，$\ell_{i,k}$ 表示样本 $i$ 指向第 $k$ 类的未归一化判别得分。分类损失采用标准交叉熵形式
 \begin{equation}
-\hat{\mathbf{y}}_i = \mathrm{softmax}(\boldsymbol{\ell}_i).
-\label{eq:softmax}
-\end{equation}
-式中，$\hat{\mathbf{y}}_i$ 为三维概率向量，其第 $k$ 个分量表示样本属于第 $k$ 类的预测概率。分类器直接作用于未归一化的 $\mathbf{h}_i$，而归一化表示 $\bar{\mathbf{h}}_i$ 仅用于一致性约束，这一设置与实际训练代码完全一致。
-
-基于式~\eqref{eq:softmax}，分类损失采用标准交叉熵形式：
-\begin{equation}
-\mathcal{L}_{\mathrm{cls}} = -\frac{1}{|\mathcal{B}|}\sum_{i \in \mathcal{B}} \log \hat{y}_{i,y_i},
+\mathcal{L}_{\mathrm{cls}} =
+-\frac{1}{|\mathcal{B}|}\sum_{i \in \mathcal{B}}
+\log
+\frac{\exp(\ell_{i,y_i})}{\sum_{k=1}^{|\mathcal{Y}|}\exp(\ell_{i,k})},
 \label{eq:ce}
 \end{equation}
-其中，$|\mathcal{B}|$ 表示 batch 大小，$\hat{y}_{i,y_i}$ 表示样本 $i$ 在真实标签 $y_i$ 上的预测概率。$\mathcal{L}_{\mathrm{cls}}$ 的作用是学习缺陷类别边界，而上一节的 $\mathcal{L}_{\mathrm{cc}}$ 则负责抑制工况诱导的表示漂移；二者分别对应类别可分性与跨工况稳定性两个目标。
+其中，$|\mathcal{B}|$ 表示 batch 大小。$\mathcal{L}_{\mathrm{cls}}$ 负责学习缺陷类别边界，而上一节的 $\mathcal{L}_{\mathrm{cc}}$ 负责抑制工况诱导的表示漂移，二者分别对应类别可分性与跨工况稳定性两个目标。
 
-在参数更新策略上，本文冻结预训练视觉编码主干，仅更新融合头参数 $\theta_f$ 与分类头参数 $\theta_c=(\mathbf{W}_c,\mathbf{b}_c)$。这种轻量适配方式将任务相关更新限制在小规模新增模块中，从而在有限标注条件下尽量保留大模型的泛化先验，避免未见工况识别过度依赖训练工况中的局部统计特征。
+在参数更新策略上，本文冻结预训练视觉编码主干，仅更新融合头参数 $\theta_f$ 与分类头参数 $\theta_c=(\mathbf{W}_c,\mathbf{b}_c)$。这种轻量适配方式将任务相关更新限制在小规模新增模块中，从而在有限标注条件下尽量保留大模型的泛化先验。
 
 综合以上设计，模型的最终优化目标写为
 \begin{equation}
 \mathcal{L} = \mathcal{L}_{\mathrm{cls}} + \lambda \mathcal{L}_{\mathrm{cc}},
 \label{eq:total}
 \end{equation}
-其中，$\lambda$ 为一致性约束权重，本文主实验取 $\lambda=0.1$。式~\eqref{eq:total} 表明，本文并非单纯追求训练集上的分类正确率，而是同时要求模型在融合空间中保持跨工况稳定，从而把大模型先验真正转化为未见工况下可用的判别能力。
+其中，$\lambda$ 为一致性约束权重。式~\eqref{eq:total} 表明，模型优化不仅要求训练集上的类别可分性，还要求融合表示在工况变化下保持稳定。
 
 
 \subsection{训练流程与整体架构}
 
-训练阶段采用标准 mini-batch 梯度下降，但每一轮更新都依次经过共享视觉编码、多模态融合、因果一致性对齐和判别优化四个步骤。对 batch 中的每个样本，模型先按照当前模态组合组织输入观测，并由共享视觉主干提取模态级向量；随后通过融合头得到 $\mathbf{h}_i$ 和 $\bar{\mathbf{h}}_i$，分别用于分类损失与一致性损失计算。若当前 batch 中存在同标签异工况正样本，则额外计算 $\mathcal{L}_{\mathrm{cc}}$；否则仅优化 $\mathcal{L}_{\mathrm{cls}}$。主实验使用 AdamW 优化器与 cosine 学习率调度，在验证集上按 Macro-F1 选择最优 epoch，并配合 early stopping 控制过拟合。
-
-表~\ref{tab:method_train_algo} 给出了 MCSQ-Net 的训练流程伪代码，表~\ref{tab:method_model_arch} 汇总了 MCSQ-Net 的关键结构配置。这两张表分别说明模型训练过程和核心组成，共同构成方法章的实现性描述。
+训练阶段采用标准 mini-batch 梯度下降。每一轮更新依次经过共享视觉编码、多模态融合、跨工况一致性对齐和判别优化四个步骤：先由共享视觉主干提取模态级向量，再由融合头得到 $\mathbf{h}_i$ 和 $\bar{\mathbf{h}}_i$，随后联合计算 $\mathcal{L}_{\mathrm{cls}}$ 与 $\mathcal{L}_{\mathrm{cc}}$ 并更新可训练参数。表~\ref{tab:method_train_algo} 给出了训练流程伪代码，表~\ref{tab:method_model_arch} 汇总了关键结构配置；具体训练超参数放在实验设置中说明。
 
 \begin{table}[!t]
 \centering
@@ -279,12 +266,11 @@ P_i^{(m)} = \frac{t_i^{(m)} h_i^{(m)} w_i^{(m)}}{s^2}.
 \midrule
 共享视觉主干 & 预训练视觉编码器，$d_v=1536$，冻结全部视觉层 & 提取统一模态特征 \\
 模态级聚合 & 均值池化，$\mathbf{z}_i^{(m)}\in\mathbb{R}^{d_v}$ & 生成模态级表示 \\
-输入组织 & 单视觉、单红外、视觉-红外组合输入 & 比较不同输入配置 \\
 特征拼接 & $\mathbf{g}_i=\mathrm{Concat}(\mathbf{z}_i^{(m_1)},\dots,\mathbf{z}_i^{(m_{K_i})})\in\mathbb{R}^{K_i d_v}$ & 保留模态互补信息 \\
 融合头 & $\mathrm{LN}+\mathrm{Linear}(K_i d_v,512)+\mathrm{GELU}+\mathrm{Dropout}(0.1)+\mathrm{Linear}(512,512)+\mathrm{GELU}$ & 压缩并重组融合特征 \\
 一致性约束 & 同标签异工况配对，余弦一致性损失，$\lambda=0.1$ & 抑制工况诱导偏移 \\
 分类头 & $\mathrm{Linear}(512,|\mathcal{Y}|)$ & 输出缺陷类别得分 \\
-轻量适配 & 训练参数 $\{\theta_f,\theta_c\}$，batch size $=4$ & 保留大模型泛化先验 \\
+轻量适配 & 冻结视觉主干，仅训练 $\{\theta_f,\theta_c\}$ & 保留大模型泛化先验 \\
 \bottomrule
 \end{tabular*}
 \end{table*}
@@ -319,9 +305,9 @@ Task-3 & 外部迁移缺陷类别识别 & 以 Task-1 源域训练集为基础，
 \end{tabular*}
 \end{table*}
 
-本文统一报告 Accuracy、Balanced Accuracy 和 Macro-F1 三项指标。Accuracy 反映总体分类正确率；Balanced Accuracy 取各类别召回率的平均值，可减弱类别分布不均衡对结果的影响；Macro-F1 对各类别 F1 值做无权平均，更能反映模型在不同缺陷类别上的整体识别均衡性。考虑到未见工况缺陷识别同时面临类别不均衡和跨类别性能波动，后文分析主要结合 Balanced Accuracy 与 Macro-F1 展开。
+本文统一报告 Accuracy、Balanced Accuracy 和 Macro-F1 三项指标。其中，Balanced Accuracy 与 Macro-F1 分别反映类别召回的均衡性和跨类别识别的整体稳定性。考虑到未见工况识别同时面临类别不均衡与类别间性能波动，后文分析以这两项指标为主。
 
-为便于结果呈现，本文对主要对照组采用统一简称。具体而言：
+为便于结果呈现，本文对主要对照组采用如下简称：
 \begin{itemize}
 \item \texttt{C1}：ResNet18 + Camera 1，用于表征单视觉模态基线性能。
 \item \texttt{IR-Only}：ResNet18 + IR only，用于评估红外热信息单独参与识别时的判别能力。
@@ -334,7 +320,7 @@ Task-3 & 外部迁移缺陷类别识别 & 以 Task-1 源域训练集为基础，
 \end{itemize}
 
 \subsection{未见工况下的缺陷识别}
-表~\ref{tab:data1_main_cn} 给出了源域未见工况缺陷类别识别结果。经典 CNN 路线中，单视觉基线 `C1` 已取得 0.8269 的 Macro-F1，而双视觉拼接基线 `Dual` 进一步提升至 0.8323，说明互补视角能够改善缺陷判别；但 `Tri-MLP`、`Tri-CA` 和 `Tri-LF` 并未稳定超过 `Dual`，表明仅增加模态数或增强融合复杂度，并不能自然获得跨工况增益。采用同样三模态输入的两条大模型路线则表现出明显分化：Prompt-Qwen 的 Macro-F1 仅为 0.3914，说明直接依赖提示式闭集分类难以在工业小样本条件下有效组织多模态信息；MCSQ-Net 则将 Macro-F1 提升至 0.8547，并同时取得最高的 Accuracy 和 Balanced Accuracy。结合表中的可训练参数量可以看出，这一优势并非来自更大的任务适配规模，而是来自在保留大模型视觉先验的基础上，通过同标签异工况表征对齐抑制工况诱导偏移，使融合表示更加聚焦于稳定的缺陷语义而非局部工况相关纹理。因此，因果一致性约束是 MCSQ-Net 在未见工况下取得性能优势的关键因素。
+表~\ref{tab:data1_main_cn} 给出了源域未见工况缺陷类别识别结果。经典 CNN 路线中，`C1` 已取得 0.8269 的 Macro-F1，而双视觉拼接基线 `Dual` 进一步提升至 0.8323，说明互补视角能够改善缺陷判别；但 `Tri-MLP`、`Tri-CA` 和 `Tri-LF` 并未稳定超过 `Dual`，表明单纯增加模态数或提升融合复杂度并不能自然带来跨工况增益。采用同样三模态输入的两条大模型路线则明显分化：Prompt-Qwen 的 Macro-F1 仅为 0.3914，而 MCSQ-Net 提升至 0.8547，并同时取得最高的 Accuracy 和 Balanced Accuracy。结合表中的可训练参数量可见，这一优势并非来自更大的任务适配规模，而是来自在保留大模型视觉先验的基础上，通过同标签异工况表征对齐抑制工况诱导偏移，从而获得更稳定的缺陷语义表示。
 
 \begin{table*}[!t]
 \caption{Task-1 未见工况缺陷类别识别结果}
@@ -360,7 +346,7 @@ MCSQ-Net & \textbf{0.8521 $\pm$ 0.0929} & \textbf{0.8556 $\pm$ 0.0973} & \textbf
 {\footnotesize 注：表中参数量为可训练参数量。经典 CNN 对照按 ResNet18 主干及对应融合头统计；Prompt-Qwen 按默认 LoRA 设定（$r=16,\alpha=32$）估算；MCSQ-Net 按主实验结果对应的双视觉配置统计。相对推理代价综合考虑编码主干规模、输入模态数及是否需要自回归解码。}
 \end{table*}
 
-Task-2 的结果如图~\ref{fig:task2_anomaly_cn} 所示。无论在 Balanced Accuracy 还是 Macro-F1 上，最佳经典基线 `Dual` 均明显优于 Prompt-Qwen 和 MCSQ-Net，说明在当前设定下，具有开集含义的异常识别仍更依赖显式判别式表征学习。与此同时，MCSQ-Net 在两项指标上仍高于 Prompt-Qwen，表明因果一致性约束虽不足以弥补二分类异常识别中判别边界的收缩，但能够在一定程度上改善异常模式的分离质量。因此，Task-2 更适合作为补充评估，用于分析模型对异常与正常样本的区分能力。
+Task-2 的结果如图~\ref{fig:task2_anomaly_cn} 所示。无论在 Balanced Accuracy 还是 Macro-F1 上，最佳经典基线 `Dual` 均明显优于 Prompt-Qwen 和 MCSQ-Net，说明在当前设定下，具有开集含义的异常识别仍更依赖显式判别式表征学习。与此同时，MCSQ-Net 在两项指标上仍高于 Prompt-Qwen，表明因果一致性约束能够在一定程度上改善异常模式的分离质量。因而，Task-2 主要作为补充评估，用于考察模型对异常与正常样本的区分能力。
 
 \begin{figure}[!t]
 \centering
@@ -369,7 +355,7 @@ Task-2 的结果如图~\ref{fig:task2_anomaly_cn} 所示。无论在 Balanced Ac
 \label{fig:task2_anomaly_cn}
 \end{figure}
 
-Task-3 进一步检验了模型在外部迁移场景下的稳健性。与 Task-1 相比，该任务同时引入设备成像条件、工艺参数范围和缺陷分布的复合偏移，因此更容易放大模型对工况相关表面线索的依赖。图~\ref{fig:data2_transfer_cn} 给出了三种代表性方法从 Task-1 到 Task-3 的性能迁移轨迹。Prompt-Qwen 在源域与外部域上均保持较低水平；经典最优迁移基线 `Tri-LF` 的 Macro-F1 由 0.7751 降至 0.4236，Balanced Accuracy 由 0.7786 降至 0.4973。相比之下，MCSQ-Net 在 Task-3 上仍取得 0.6067 的 Macro-F1 和 0.6359 的 Balanced Accuracy，且跨域退化幅度更小，说明因果一致性约束能够削弱工况相关伪线索对融合表示的干扰，并保留更稳定的缺陷语义。
+Task-3 进一步检验了模型在外部迁移场景下的稳健性。该任务同时引入设备成像条件、工艺参数范围和缺陷分布的复合偏移，因此更容易放大模型对工况相关表面线索的依赖。图~\ref{fig:data2_transfer_cn} 给出了三种代表性方法从 Task-1 到 Task-3 的性能迁移轨迹。Prompt-Qwen 在源域与外部域上均保持较低水平；经典最优迁移基线 `Tri-LF` 的 Macro-F1 由 0.7751 降至 0.4236，Balanced Accuracy 由 0.7786 降至 0.4973。相比之下，MCSQ-Net 在 Task-3 上仍取得 0.6067 的 Macro-F1 和 0.6359 的 Balanced Accuracy，且跨域退化幅度更小，表明因果一致性约束能够削弱工况相关伪线索对融合表示的干扰。
 
 \begin{figure}[!t]
 \centering
@@ -378,48 +364,35 @@ Task-3 进一步检验了模型在外部迁移场景下的稳健性。与 Task-1
 \label{fig:data2_transfer_cn}
 \end{figure}
 
-这一结果也补充说明了红外模态的作用方式。红外信息在增材制造监测中仍具有明确的物理意义和统计价值 \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}，但其收益取决于具体融合机制和样本规模：在经典迁移基线中，`Tri-LF` 受益于三模态晚期融合；而在当前 MCSQ-Net 设定下，最优输入配置仍为 Camera 1 \& 2。
+这一结果也补充说明了红外模态的作用方式。红外信息在增材制造监测中仍具有明确的物理意义和统计价值 \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}，但其收益取决于融合机制和样本规模：在经典迁移基线中，`Tri-LF` 受益于三模态晚期融合；而在当前 MCSQ-Net 设定下，最优输入配置仍为 Camera 1 \& 2。
 
 \subsection{消融实验}
-为进一步说明 MCSQ-Net 的性能来源，本节从多模态组合和方法组成两个方面开展消融分析。表~\ref{tab:ablation_cn} 给出了多模态消融结果。可以看出，各模态均能提供有效缺陷信息，但其增益依赖具体融合方式。首先，IR 模态仍能达到 0.6270 的 Macro-F1，说明红外热信息确实包含有意义的缺陷线索。其次，Camera 1 \& 2 是当前最稳定的输入配置，因为两个视角提供了更稳健的几何与纹理互补。最后，Camera 1 \& 2 + IR 没有超过 Camera 1 \& 2，说明当前问题不在于是否引入红外模态，而在于如何更有效地建模其热特征贡献。
+为分析 MCSQ-Net 的性能来源，本节从多模态组合和方法组成两个方面开展消融。表~\ref{tab:ablation_cn} 汇总了两类结果。多模态消融表明，各模态均能提供有效缺陷信息，但其收益取决于具体融合方式：IR 单模态仍可达到 0.6270 的 Macro-F1，说明红外热信息具有独立判别价值；Camera 1 \& 2 是当前最稳定的输入配置，表明双视角几何与纹理互补更适合当前任务；Camera 1 \& 2 + IR 未超过 Camera 1 \& 2，则说明当前瓶颈不在于是否引入红外模态，而在于如何更有效地建模其热特征贡献。这一判断与迁移基线的表现一致：在 Task-3 上，经典最优方法采用了三模态晚期融合，说明 IR 的最佳利用方式与模型家族密切相关。模型消融进一步验证了因果一致性约束的作用。去除该约束后，Macro-F1 和 Balanced Accuracy 分别由 0.8547 和 0.8556 降至 0.8402 和 0.8422；若解冻最后两个视觉块，Macro-F1 进一步降至 0.7781，且 Task-3 上也由 0.6067 降至 0.5808。这表明更有效的策略并非激进微调视觉主干，而是在保留大模型先验的基础上提升融合表示的稳定性。
 
 \begin{table}[!t]
-\caption{MCSQ-Net 多模态消融结果}
+\caption{MCSQ-Net 消融结果}
 \label{tab:ablation_cn}
 \centering
 \footnotesize
-\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}lcc@{}}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}>{\raggedright\arraybackslash}p{0.16\columnwidth}>{\raggedright\arraybackslash}p{0.34\columnwidth}>{\centering\arraybackslash}p{0.21\columnwidth}>{\centering\arraybackslash}p{0.21\columnwidth}@{}}
 \toprule
-输入配置 & Balanced Accuracy & Macro-F1 \\
+消融类别 & 具体设置 & Balanced Accuracy & Macro-F1 \\
 \midrule
-Camera 1 & 0.7714 $\pm$ 0.0771 & 0.7419 $\pm$ 0.1203 \\
-IR & 0.6508 $\pm$ 0.0708 & 0.6270 $\pm$ 0.0878 \\
-Camera 1 \& 2 & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
-Camera 1 \& 2 + IR & 0.8169 $\pm$ 0.0659 & 0.8121 $\pm$ 0.0615 \\
-Camera 1 \& 2 + 因果稳定约束 & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
+\multirow{5}{=}{多模态消融}
+& Camera 1 & 0.7714 $\pm$ 0.0771 & 0.7419 $\pm$ 0.1203 \\
+& IR & 0.6508 $\pm$ 0.0708 & 0.6270 $\pm$ 0.0878 \\
+& Camera 1 \& 2 & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
+& Camera 1 \& 2 + IR & 0.8169 $\pm$ 0.0659 & 0.8121 $\pm$ 0.0615 \\
+& Camera 1 \& 2 + 因果稳定约束 & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
+\midrule
+\multirow{3}{=}{模型结构消融}
+& w/o 因果稳定约束 & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
+& 完整模型 & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
+& 解冻最后两个视觉块 & 0.7979 $\pm$ 0.0332 & 0.7781 $\pm$ 0.0411 \\
 \bottomrule
 \end{tabular*}
 \end{table}
-
-这一判断与迁移基线的表现是相互印证的：在 Task-3 上，经典最优方法反而采用了三模态晚期融合。这进一步说明 IR 并非无效，而是其最佳利用方式与模型家族密切相关。
-
-\begin{table}[!t]
-\caption{MCSQ-Net 方法消融结果}
-\label{tab:method_ablation_cn}
-\centering
-\footnotesize
-\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}lcc@{}}
-\toprule
-方法设置 & Balanced Accuracy & Macro-F1 \\
-\midrule
-w/o 因果稳定约束 & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
-完整模型 & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
-解冻最后两个视觉块 & 0.7979 $\pm$ 0.0332 & 0.7781 $\pm$ 0.0411 \\
-\bottomrule
-\end{tabular*}
-\end{table}
-
-表~\ref{tab:method_ablation_cn} 进一步验证了因果一致性约束的作用。去除该约束后，Macro-F1 和 Balanced Accuracy 分别由 0.8547 和 0.8556 降至 0.8402 和 0.8422，说明跨工况同标签对齐能够进一步抑制工况诱导的伪相关。若解冻最后两个视觉块，Macro-F1 进一步降至 0.7781，且 Task-3 上的 Macro-F1 也由 0.6067 降至 0.5808。这表明当前更有效的策略并非激进微调视觉主干，而是在保留大模型先验的基础上提升融合表示的稳定性。
 
 \section{结论}
 本文研究了金属增材制造未见工况下的多模态缺陷识别问题，重点关注如何利用预训练大模型先验提升跨工况稳定性。为此，本文提出 MCSQ-Net，通过共享视觉编码、多模态融合和跨工况因果一致性约束学习稳定的缺陷表示。实验表明，该方法在源域未见工况缺陷类别识别和外部迁移测试中均优于 Prompt-Qwen 与经典多模态基线，说明仅依赖提示或常规融合难以充分应对工况偏移，而在融合表示层显式抑制工况相关伪线索是提升泛化能力的关键。方法消融进一步表明，因果一致性约束能够稳定改善表示质量，而激进解冻视觉主干会削弱大模型原有先验并带来过拟合。后续工作可进一步探索面向红外热特征的更细粒度融合机制，以及视觉侧 adapter/LoRA 等更温和的参数高效适配方案。

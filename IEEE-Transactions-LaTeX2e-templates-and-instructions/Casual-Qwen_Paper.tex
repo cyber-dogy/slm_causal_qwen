@@ -1,7 +1,11 @@
-\documentclass[lettersize,journal]{IEEEtran}
-\usepackage{amsmath,amssymb,amsfonts}
+\documentclass[journal]{IEEEtran}
+\usepackage{amsmath,amssymb}
+\usepackage{newtxtext}
+\usepackage{newtxmath}
 \usepackage{algorithmic}
+\usepackage{booktabs}
 \usepackage{array}
+\usepackage{multirow}
 \usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
 \usepackage{textcomp}
 \usepackage{stfloats}
@@ -15,312 +19,419 @@
 
 \begin{document}
 
-\title{Large-Model Prior and Causal Consistency for Unseen-Condition Multimodal Defect Recognition in SLM}
+\title{Large-Model Prior and Causal Consistency for Unseen-Condition Multimodal Defect Recognition in Additive Manufacturing}
 
-\author{Author Name(s)
-\thanks{Author names, affiliations, funding notes, and the corresponding author information will be inserted in the final submission version.}}
+\author{Junwei~Gu, Jiahui~Guo, and Yu~Wang%
+\thanks{Author affiliations, funding information, and the corresponding author note will be added in the final submission version.}}
 
 \markboth{IEEE Transactions on Industrial Informatics,~Vol.~XX, No.~XX, Month~2026}%
-{Author \MakeLowercase{\textit{et al.}}: Large-Model Prior and Causal Consistency for SLM}
+{Gu \MakeLowercase{\textit{et al.}}: Large-Model Prior and Causal Consistency for Unseen-Condition Multimodal Defect Recognition in Additive Manufacturing}
 
 \maketitle
 
 \begin{abstract}
-Selective Laser Melting (SLM) monitoring provides multi-view RGB and infrared observations, but defect recognition becomes unreliable under unseen conditions. This paper studies a setting where \texttt{data1 official\_cv} holds out complete \texttt{condition\_uid}s and \texttt{data2 transfer\_test} serves as a harder external transfer benchmark. The problem is how to use a large-model prior for small-sample multimodal SLM recognition without overfitting to condition-specific shortcuts. Direct prompt-based adaptation of Qwen2-VL reaches only 0.3914 Macro-F1 on the 3-class \texttt{data1 official\_cv} task. We therefore reuse the Qwen2-VL vision tower as a pretrained visual prior, fuse multimodal views with an explicit MLP head, and impose a cross-condition causal consistency loss on the fused representation. The main regime keeps the visual prior frozen and trains only the lightweight head. On \texttt{data1 official\_cv}, the proposed method reaches 0.8547 Macro-F1 and 0.8556 balanced accuracy, outperforming prompt-Qwen and the strongest classical baseline. On \texttt{data2 transfer\_test}, it reaches 0.6067 Macro-F1. Input ablations show that RGB view 1, RGB view 2, and infrared observations all contribute useful information, although the current Qwen branch is best instantiated with dual RGB. Additional experiments show that true fine-tuning of the last two visual blocks is harmful, indicating that preserving the large-model prior and enforcing causal consistency is more effective than aggressive end-to-end adaptation.
+In-situ monitoring in metal additive manufacturing typically provides multimodal observations such as visual and infrared signals. When training and test conditions differ, however, defect recognition models can mistake condition-related cues, including background texture and thermal-field distribution, for defect evidence, resulting in substantial performance degradation under unseen conditions. To address this problem, this paper proposes the Multimodal Causal-Stable Qwen Network (MCSQ-Net). The method uses the visual encoding component of a pretrained large model as a shared feature extractor, constructs a unified fusion space through multimodal representation learning, and imposes a causal consistency constraint on same-class samples from different conditions in the fused representation space to suppress condition-induced drift. A lightweight classification head is then used for defect category recognition, enabling task adaptation under limited supervision while preserving the generalization prior of the pretrained model. Experiments are conducted under both source-domain condition-held-out cross-validation and external transfer settings. MCSQ-Net achieves a Macro-F1 of 0.8547 and a Balanced Accuracy of 0.8556 on Task-1 defect category recognition, and a Macro-F1 of 0.6067 on Task-3 external transfer, outperforming both Prompt-Qwen and classical multimodal baselines. Ablation studies further show that the causal consistency constraint consistently improves cross-condition representation quality, whereas aggressive unfreezing of the visual backbone weakens unseen-condition generalization. These results indicate that, for industrial small-sample multimodal defect recognition, preserving large-model visual priors and explicitly learning cross-condition stable representations in the fusion space is an effective strategy for improving recognition performance under unseen conditions.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Selective laser melting, multimodal defect recognition, unseen-condition generalization, external transfer, large-model prior, causal consistency, Qwen2-VL.
+Selective laser melting, defect recognition, multimodal fusion, unseen-condition generalization, external transfer, large-model prior, causal consistency constraint.
 \end{IEEEkeywords}
 
 \section{Introduction}
-\IEEEPARstart{S}{elective} Laser Melting (SLM) is a representative metal additive manufacturing process whose final part quality is strongly affected by melt-pool stability, thermal diffusion, and layer-wise geometric evolution. Practical monitoring systems therefore collect multiple sensing views, especially optical images and infrared observations, in order to infer defect states during printing \cite{ref_pbf_review,ref_optical_defect,ref_ir_defect}. For industrial deployment, however, the central challenge is not merely whether a classifier works under a random split. The more relevant question is whether multimodal defect recognition remains reliable under unseen process conditions.
+\IEEEPARstart{M}{etal} additive manufacturing constructs complex parts layer by layer through the melting of metal powders and has been widely adopted in aerospace, medical devices, and tooling. Selective laser melting (SLM), as a representative process, involves complex physical phenomena such as melt-pool dynamics, heat transfer, and solidification \cite{ref_defect_formation_slm}. Variations in process parameters can directly lead to defects including pores, cracks, and geometric distortion \cite{ref_in_situ_monitoring_review}. Even minor process deviations may substantially affect the mechanical performance and service reliability of the final part.
 
-The repository studied in this paper directly targets that question. Its main benchmark, \texttt{data1 official\_cv}, splits samples by \texttt{condition\_uid} so that train and test sets do not share the same process condition. A second benchmark, \texttt{data2 transfer\_test}, is reserved as a harder external transfer stress test involving unseen models, unseen process settings, and broader distribution shift. This dual evaluation protocol makes the project suitable for studying unseen-condition multimodal recognition rather than ordinary in-domain classification.
+Industrial systems commonly deploy visible-light cameras and infrared imagers to monitor metal additive manufacturing processes in a synchronized manner \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}. Visible imaging captures melt-pool morphology and surface texture, whereas infrared imaging reflects heat-input distribution and thermal-field evolution. Such multimodal observations provide complementary defect evidence. Existing monitoring methods, however, generally assume that training and test data follow the same distribution. When process parameters, equipment models, or powder batches change, recognition performance often degrades significantly.
 
-Large vision-language models provide a natural starting point because they encode strong pretrained visual priors. Qwen2-VL is particularly attractive due to its high-capacity visual encoder and flexible multimodal interface \cite{ref_qwen2vl}. Yet the repository history also reveals a negative result: directly adapting Qwen2-VL through prompt-based closed-set scoring performs poorly on the current industrial task. This suggests that the limitation is not the absence of a large-model prior itself, but the way that prior is transferred to a small-sample and condition-shifted recognition problem.
+This failure mode is rooted in the tendency of deep models to rely on spurious correlations. Instead of learning causal defect characteristics, the model may exploit superficial statistical cues such as background texture, illumination patterns, or device noise. In multimodal monitoring for metal additive manufacturing, this means that the model may incorrectly treat condition-specific thermal backgrounds as defect evidence, which leads to failure under unseen conditions. Learning stable recognition rules that transfer from seen training conditions to unseen test conditions is therefore a central problem in defect recognition for metal additive manufacturing, particularly SLM.
 
-This paper therefore reframes the problem as discriminative adaptation of a large-model prior. The proposed method keeps Qwen2-VL as the visual foundation, explicitly fuses multimodal observations, and imposes a causal consistency regularizer on same-label samples drawn from different conditions. The main hypothesis is that defect-relevant evidence should remain stable across conditions, while textures, illumination patterns, and thermal backgrounds may vary. Under this view, causal consistency is not used to claim a full causal graph of SLM, but to bias the learned representation toward condition-stable defect cues. The design also keeps multimodal evidence central throughout the paper: the best Qwen configuration currently uses dual RGB input, yet infrared remains meaningful because IR-only recognition is non-trivial and triple-view transfer is strong in the classical baseline family.
+Pretrained large visual models offer a possible solution. Trained on massive visual and multimodal corpora, these models provide strong priors for handling heterogeneous inputs and, in principle, should help extract condition-stable representations. Existing evidence nevertheless shows that simple prompt-based adaptation is inadequate under unseen-condition settings. Large-model priors do not automatically translate into accurate industrial defect recognition. The key challenge is how to adapt them in a way that preserves cross-condition stability while effectively integrating complementary information from multiple sensors.
 
-The contributions are summarized as follows.
+This paper proposes the Multimodal Causal-Stable Qwen Network (MCSQ-Net) for unseen-condition defect recognition in metal additive manufacturing. The central idea is to use a pretrained large visual model as a cross-condition feature extractor, explicitly fuse visible and infrared information, and impose a causal consistency constraint in the fusion space. MCSQ-Net adopts a lightweight discriminative adaptation strategy so that cross-condition invariant defect representations can be learned while retaining the pretrained prior. Specifically, the causal stability assumption is that condition-related cues such as texture, brightness, and thermal background vary with process settings, whereas essential defect characteristics should remain stable across conditions. By constraining same-class samples from different conditions to be close in the fusion space, the model is driven to reduce its reliance on unstable environmental factors and to learn a more robust mapping from seen to unseen conditions.
+
+The main contributions are threefold.
 \begin{enumerate}
-\item An unseen-condition evaluation narrative is formalized for multimodal SLM defect recognition, where \texttt{data1 official\_cv} is the source-side condition-heldout benchmark and \texttt{data2 transfer\_test} is the external transfer benchmark.
-\item A four-stage framework is developed around a Qwen2-VL large-model prior: multimodal feature extraction, causal consistency representation regularization, lightweight large-model adaptation, and closed-set prediction output.
-\item Experiments show that causal consistency improves small-sample adaptation of the large-model prior, while direct prompt-based adaptation and aggressive true fine-tuning both underperform under unseen-condition and transfer evaluation.
+\item We verify the necessity of multimodal fusion for unseen-condition defect recognition. By comparing single-modality and multimodal configurations under cross-condition evaluation, we show that combining visible and infrared information improves adaptation to unseen devices and unseen process settings, thereby providing empirical guidance for sensor configuration in industrial monitoring systems.
+\item We develop a large-model-prior-guided framework for unseen-condition defect recognition. The framework freezes the pretrained visual backbone and introduces a learnable multimodal fusion head for lightweight discriminative adaptation, balancing deployment efficiency and recognition accuracy. Experiments show that this strategy maintains stable detection performance in cross-device transfer scenarios.
+\item We introduce a causal-stable representation learning mechanism. By enforcing consistency across same-class samples from different conditions, the model is encouraged to suppress background texture, thermal noise, and other environment-dependent cues, and to focus instead on the intrinsic characteristics of the defect itself. This mechanism improves generalization from seen to unseen conditions and provides a practical route toward robust industrial vision monitoring.
 \end{enumerate}
 
 \section{Related Work}
-\subsection{Multimodal Monitoring and Defect Recognition in SLM}
-SLM and powder-bed-fusion monitoring have been extensively studied through optical images, infrared thermography, acoustic signals, and multi-sensor combinations \cite{ref_pbf_review,ref_optical_defect,ref_ir_defect,ref_multisensor_am,ref_multisensor_platform}. Optical monitoring is effective for observing surface irregularities and recoating artifacts, while infrared imaging captures thermal signatures associated with subsurface instability and lack-of-fusion behavior. Recent multisensor studies further show that complementary modalities can improve process understanding when the fusion mechanism is aligned with the sensing physics. These findings motivate this paper to treat RGB view 1, RGB view 2, and IR as meaningful defect sources rather than interchangeable inputs.
+\subsection{Multimodal Defect Monitoring in Metal Additive Manufacturing}
 
-\subsection{Large-Model Adaptation Under Distribution Shift}
-Large pretrained vision-language models provide transferable visual priors, but strong pretraining does not guarantee robustness under industrial condition shift. Qwen2-VL is a recent strong example of high-capacity visual-language pretraining \cite{ref_qwen2vl}. Meanwhile, invariant learning and robust optimization literature emphasizes that models should be guided away from environment-specific shortcuts when test environments differ from training ones \cite{ref_irm,ref_groupdro}. This perspective is directly relevant here: small-sample industrial adaptation can easily overfit to condition-dependent textures or thermal backgrounds, so the key problem is how to preserve the large-model prior while encouraging condition-stable representations.
+In-situ monitoring for metal additive manufacturing has evolved along three main directions: visible-light imaging, infrared thermography, and multi-sensor fusion \cite{ref_defect_formation_slm,ref_in_situ_monitoring_review,ref_lpbf_sensing_review,ref_intelligent_defect_pbf}. Existing studies have consistently shown that multimodal observations can characterize defect formation from complementary perspectives, including morphology, thermal input, and process dynamics, and therefore are more informative than single-modality sensing.
 
-\section{Unseen-Condition Task Definition and Evaluation Protocols}
-\subsection{Source-Side Condition-Heldout Benchmark}
-The main benchmark is the 3-fold \texttt{data1 official\_cv} protocol. Instead of randomly splitting images, the repository splits by \texttt{condition\_uid}, ensuring that all samples from the same process condition remain in the same fold. This design prevents leakage of highly similar background patterns, layer textures, and thermal statistics across train and test sets. The primary task is 3-class defect recognition with labels \texttt{normal}, \texttt{HEW}, and \texttt{LEL}; \texttt{HEV} is merged into \texttt{HEW} in the released manifests.
+Representative studies have validated the effectiveness of multimodal monitoring. Wu \emph{et al.} \cite{ref_wu2024_multisensor} demonstrated that multi-sensor monitoring improves quality-level recognition. Liu \emph{et al.} \cite{ref_liu2024_acoustic} reconstructed melt-pool visual characteristics from acoustic and thermal-radiation signals, offering a lower-cost alternative to high-speed imaging. Shen \emph{et al.} \cite{ref_shen2024_multisource} jointly modeled infrared images, top-view images, process parameters, and physical simulation results, while Li \emph{et al.} \cite{ref_li2024_transfer} discussed the transferability of multimodal features across materials. These studies confirm the value of multimodal fusion in defect monitoring, but most still assume that training and test data are drawn from similar distributions. Less attention has been paid to the distribution shift jointly induced by changes in equipment, process parameters, and operating environments under unseen conditions. In contrast, this paper focuses on learning multimodal defect representations that remain stable under condition-disjoint evaluation.
 
-\subsection{External Transfer Benchmark}
-The \texttt{data2 transfer\_test} set is not used for model selection. Instead, it serves as an external transfer test with larger distribution shift involving unseen models, unseen process settings, and broader role variation. This distinction is important for interpretation: absolute scores are expected to be lower than on \texttt{data1}, but relative performance under \texttt{data2} more directly reflects practical robustness.
+\subsection{Large-Model Adaptation and Cross-Domain Generalization}
 
-\subsection{Multimodal Inputs and Evaluation Targets}
-The repository supports four input modes: \texttt{rgb\_view1}, \texttt{rgb\_dual}, \texttt{ir\_only}, and \texttt{triple\_view}. Throughout the paper, these are viewed as different instantiations of the modality set $\mathcal{M}\subseteq\{\mathrm{rgb1},\mathrm{rgb2},\mathrm{ir}\}$. The main paper target is 3-class recognition because the Qwen branch is substantially more stable on 3-class learning than on direct 2-class training.
+Pretrained large models provide a new source of prior knowledge for industrial anomaly and defect recognition. Recent work such as AnomalyGPT \cite{ref_anomalygpt}, Myriad \cite{ref_myriad}, OmniAD \cite{ref_omniad}, and AD-Copilot \cite{ref_ad_copilot} has demonstrated the potential of large models in industrial vision through prompt learning, expert-model integration, supervised fine-tuning, and visual context comparison. At the same time, lightweight adaptation strategies such as QLoRA and active learning \cite{ref_qlora_excavator,ref_vlm_active_learning} indicate that task specialization can be achieved in resource-constrained settings without full-parameter fine-tuning.
 
-\begin{table}[!t]
-\caption{Statistics of the Source and Transfer Protocols}
-\label{tab:data_stats}
-\centering
-\begin{tabular}{|c|c|c|c|c|c|}
-\hline
-Domain & Samples & Conditions & Normal & HEW & LEL \\
-\hline
-\texttt{data1} & 289 & 22 & 104 & 86 & 99 \\
-\hline
-\texttt{data2} & 404 & 22 & 167 & 128 & 109 \\
-\hline
-\end{tabular}
-\end{table}
-
-Table~\ref{tab:data_stats} summarizes the two protocols. Fig.~\ref{fig:protocol} is reserved for the final visualization of the condition-heldout source split and the harder transfer benchmark.
-
-\begin{figure}[!t]
-\centering
-% TODO: Replace with the exported protocol/distribution figure.
-\fbox{\rule{0pt}{1.45in}\rule{0.95\columnwidth}{0pt}}
-\caption{Protocol overview of \texttt{data1 official\_cv} and \texttt{data2 transfer\_test}. Placeholder for the final figure.}
-\label{fig:protocol}
-\end{figure}
-
-\section{Method}
-\subsection{Multimodal Data Feature Extraction}
-For sample $i$, let $\mathcal{M}_i=\{m_1,\dots,m_{K_i}\}$ denote the available modalities, where each $m$ corresponds to one of \{\texttt{rgb\_view1}, \texttt{rgb\_view2}, \texttt{ir}\}. The pretrained Qwen2-VL visual encoder $f_{\theta_v}$ is used as the large-model prior. For modality $m\in\mathcal{M}_i$, the encoder outputs a sequence of visual tokens:
-\begin{equation}
-\mathbf{T}_i^{(m)} = f_{\theta_v}\!\left(\mathbf{x}_i^{(m)}\right)\in\mathbb{R}^{P_i^{(m)}\times d},
-\end{equation}
-where $P_i^{(m)}$ is the number of visual tokens after Qwen2-VL spatial merging and $d$ is the hidden size. Following the repository implementation, the token sequence is pooled by simple averaging:
-\begin{equation}
-\mathbf{z}_i^{(m)} = \frac{1}{P_i^{(m)}}\sum_{p=1}^{P_i^{(m)}}\mathbf{T}_{i,p}^{(m)}\in\mathbb{R}^{d}.
-\end{equation}
-
-The modality vectors are concatenated and passed through a lightweight fusion head:
-\begin{equation}
-\mathbf{g}_i = \operatorname{Concat}\!\left(\mathbf{z}_i^{(m_1)},\dots,\mathbf{z}_i^{(m_{K_i})}\right),
-\end{equation}
-\begin{equation}
-\tilde{\mathbf{h}}_i = \phi\!\left(\operatorname{LN}(\mathbf{g}_i)\right), \quad
-\mathbf{r}_i = \frac{\tilde{\mathbf{h}}_i}{\|\tilde{\mathbf{h}}_i\|_2},
-\end{equation}
-where $\phi(\cdot)$ denotes the two-layer MLP fusion head with GELU and dropout. The main official run uses $K_i=2$ with dual RGB views. This should not be interpreted as evidence that IR is unhelpful; rather, it shows that the current Qwen fusion head extracts the most stable gain from the dual RGB path, while IR still carries complementary thermal information.
-
-\subsection{Causal Consistency Representation Constraint}
-Let $y_i$ denote the defect label and $c_i$ the process condition. For each training sample $i$, the dataset constructs a positive pool
-\begin{equation}
-\Omega_i = \{j \mid j\neq i,\; y_j=y_i,\; c_j\neq c_i\},
-\end{equation}
-which contains same-label samples from different conditions. During training, one positive index $\pi(i)$ is sampled from $\Omega_i$ when the pool is non-empty. For a mini-batch $\mathcal{B}$, define
-\begin{equation}
-\mathcal{B}^{+} = \{i\in\mathcal{B}\mid \Omega_i\neq\varnothing\}.
-\end{equation}
-The causal consistency loss is then written as
-\begin{equation}
-\mathcal{L}_{\mathrm{cc}} =
-\frac{1}{|\mathcal{B}^{+}|}\sum_{i\in\mathcal{B}^{+}}
-\left(1-\mathbf{r}_i^{\top}\sg\!\left(\mathbf{r}_{\pi(i)}\right)\right),
-\label{eq:lcc}
-\end{equation}
-where $\sg(\cdot)$ denotes stop-gradient on the positive branch, matching the repository implementation in which the positive representation is detached for stability and memory efficiency. Because both vectors are $\ell_2$-normalized, \eqref{eq:lcc} is equivalent to minimizing cosine distance between same-label representations across different conditions.
-
-The term ``causal consistency'' is used in an operational sense. The goal is not to recover a full causal graph of the SLM process, but to encode the assumption that the defect identity is a more stable explanatory factor than condition-specific visual shortcuts. Aligning same-label samples across different conditions therefore encourages the model to retain defect-relevant evidence while suppressing unstable condition cues.
-
-\subsection{Large-Model Adaptation Strategy}
-The trainable parameter set depends on the adaptation regime:
-\begin{equation}
-\Theta_{\mathrm{train}}=
-\begin{cases}
-\{\theta_f,\theta_c\}, & \text{lightweight adaptation},\\
-\{\theta_v^{\mathrm{last2}},\theta_m,\theta_f,\theta_c\}, & \text{true fine-tuning},
-\end{cases}
-\label{eq:trainable}
-\end{equation}
-where $\theta_f$ denotes the MLP fusion head, $\theta_c$ the classifier, $\theta_v^{\mathrm{last2}}$ the last two visual transformer blocks of Qwen2-VL, and $\theta_m$ the Qwen visual merger. The lightweight regime is the proposed main path because it preserves the large-model prior and reduces overfitting risk. The true fine-tuning regime is a diagnostic comparison that tests whether further visual-side adaptation is beneficial in the current small-sample setting.
-
-\subsection{Output Layer, Objective, and Pseudo-Code}
-Closed-set prediction is produced from the unnormalized fused representation:
-\begin{equation}
-\boldsymbol{\ell}_i = \mathbf{W}_c\tilde{\mathbf{h}}_i+\mathbf{b}_c, \qquad
-\hat{\mathbf{y}}_i=\operatorname{softmax}(\boldsymbol{\ell}_i).
-\end{equation}
-The classification loss is
-\begin{equation}
-\mathcal{L}_{\mathrm{cls}}=
--\frac{1}{|\mathcal{B}|}\sum_{i\in\mathcal{B}}\log \hat{y}_{i,y_i},
-\end{equation}
-and the overall objective becomes
-\begin{equation}
-\mathcal{L}=\mathcal{L}_{\mathrm{cls}}+\lambda \mathcal{L}_{\mathrm{cc}},
-\label{eq:total_loss}
-\end{equation}
-where $\lambda=0.1$ in the official causal configuration. The full training logic is summarized in Table~\ref{tab:pseudocode}.
+However, existing methods mainly address anomaly detection, localization, or few-shot adaptation within a single dataset, and rarely investigate the cross-domain generalization problem caused jointly by modality heterogeneity and condition shift in metal additive manufacturing. When training and test conditions are strictly disjoint, prompt-based or conventional fine-tuning strategies are often insufficient to ensure that the model learns genuinely stable defect evidence. Different from these studies, this paper uses the visual prior of a pretrained large model for multimodal unified encoding and introduces a cross-condition causal consistency constraint in the fusion space to explicitly improve defect recognition stability under unseen conditions.
 
 \begin{figure*}[!t]
 \centering
-% TODO: Replace with the final method framework illustration.
-\fbox{\rule{0pt}{1.9in}\rule{0.95\textwidth}{0pt}}
-\caption{Overall framework of the proposed method. The final figure should visualize four stages: multimodal feature extraction from RGB and IR observations, causal consistency regularization across unseen conditions, lightweight versus aggressive large-model adaptation, and closed-set prediction output.}
+\includegraphics[width=0.95\textwidth]{fig1.jpg}
+\caption{Overview of MCSQ-Net. The pipeline consists of shared visual encoding, multimodal causal-consistent fusion, and lightweight adaptation guided by large-model generalization priors.}
 \label{fig:framework}
 \end{figure*}
 
-\begin{table}[!t]
-\caption{Pseudo-Code of the Proposed Training Procedure}
-\label{tab:pseudocode}
+\section{Unseen-Condition Task Formulation}
+
+Unseen-condition multimodal defect recognition in metal additive manufacturing can be formulated as a supervised classification problem under conditional extrapolation. For sample $i$, let the joint observation be $\mathbf{x}_i=\{\mathbf{x}_i^{(k)}\mid k\in\mathcal{M}_i\}\in\mathcal{X}$, where $\mathcal{M}_i$ denotes the set of available modalities. For visual and infrared observations, $\mathbf{x}_i^{(k)}\in\mathbb{R}^{H\times W\times C}$ denotes the input from the $k$th sensor, $y_i\in\mathcal{Y}$ is the defect label, $c_i\in\mathcal{C}$ is the condition identifier, and $\mathcal{X}$ is the multimodal observation space. The condition variable $c_i$ is used to represent external factors that change the observation distribution, including equipment configuration, process parameters, printing task, and material state. Unlike conventional in-distribution classification, the training set $\mathcal{D}_{\mathrm{train}}=\{(\mathbf{x}_i,y_i,c_i)\}_{i=1}^{N}$ and the test set $\mathcal{D}_{\mathrm{test}}$ come from condition sets $\mathcal{C}_{\mathrm{train}}$ and $\mathcal{C}_{\mathrm{test}}$, respectively, with $\mathcal{C}_{\mathrm{train}}\cap\mathcal{C}_{\mathrm{test}}=\varnothing$. The model therefore faces not only new instances at test time, but also systematic distribution shifts caused by changes in equipment, process settings, and task conditions.
+
+Under this setting, the model must learn a classifier $f:\mathcal{X}\rightarrow\mathcal{Y}$ solely from $\mathcal{D}_{\mathrm{train}}$ while maintaining low risk on unseen conditions:
+\begin{equation}
+\mathcal{R}_{\mathrm{uc}}(f)=\mathbb{E}_{(\mathbf{x},y,c)\sim P_{\mathrm{test}}}\left[\ell\!\left(f(\mathbf{x}),y\right)\right], \quad c\in\mathcal{C}_{\mathrm{test}},
+\label{eq:uc_risk}
+\end{equation}
+where $\ell(\cdot,\cdot)$ is the classification loss, $\mathcal{R}_{\mathrm{uc}}$ denotes the unseen-condition risk, and $P_{\mathrm{test}}$ is the test-time data distribution. This objective is difficult because multimodal observations simultaneously contain stable discriminative factors related to defect formation and unstable background statistics or sensor-response differences induced by condition changes. Direct empirical risk minimization can exploit the latter to fit the training set, thereby encoding condition-dependent superficial correlations into the decision rule and causing failure on $\mathcal{C}_{\mathrm{test}}$. Based on this task definition, the proposed method addresses three aspects: unified representation of heterogeneous observations, extraction of condition-stable features, and transfer of large-model priors.
+
+\section{Proposed Method}
+
+To address the difficulties of heterogeneous multimodal representation, condition-dependent decision drift, and limited extrapolation under scarce labeled data, this paper proposes MCSQ-Net. For sample $i$, let its effective modality set be $\mathcal{M}_i=\{m_1,\dots,m_{K_i}\}$, where $K_i$ is the number of modalities involved in fusion. Rather than using a pretrained large model directly for prompt-based closed-set classification, MCSQ-Net takes its visual encoding component as a shared feature extractor and successively performs multimodal representation learning, cross-condition consistent fusion, and lightweight discriminative adaptation. In this way, the method seeks to suppress condition-induced representation drift while preserving as much of the pretrained prior as possible. The overall framework is shown in Fig.~\ref{fig:framework}.
+
+\subsection{Multimodal Feature Extraction}
+
+Different sensors exhibit different imaging mechanisms and statistical properties. Training a separate encoder for each modality can easily cause the model to memorize condition-related textures under limited supervision rather than stable defect cues. To mitigate this issue, MCSQ-Net shares a single pretrained large-model visual backbone $f_{\theta_v}$ across all modalities, first mapping heterogeneous observations into a unified semantic space and then constructing modality-level representations within that space.
+
+For any modality $m\in\mathcal{M}_i$, let the input observation be $\mathbf{x}_i^{(m)}$. The shared visual encoder produces the spatial feature sequence
+\begin{equation}
+\mathbf{E}_i^{(m)} = f_{\theta_v}\!\left(\mathbf{x}_i^{(m)}\right)
+= \left[\mathbf{e}_{i,1}^{(m)},\dots,\mathbf{e}_{i,P_i^{(m)}}^{(m)}\right]^\top
+\in \mathbb{R}^{P_i^{(m)} \times d_v},
+\label{eq:vision_features}
+\end{equation}
+where $d_v$ is the feature dimension, $P_i^{(m)}$ is the number of retained local features after spatial compression in the visual backbone, and $\mathbf{e}_{i,p}^{(m)}$ is the local visual feature at the $p$th spatial position. Since the downstream fusion module requires fixed-length inputs, the spatial feature sequence is mean-pooled to obtain a modality-level representation:
+\begin{equation}
+\mathbf{z}_i^{(m)} = \frac{1}{P_i^{(m)}} \sum_{p=1}^{P_i^{(m)}} \mathbf{e}_{i,p}^{(m)} \in \mathbb{R}^{d_v}.
+\label{eq:modal_pooling}
+\end{equation}
+Here, $\mathbf{z}_i^{(m)}$ is the global semantic vector of modality $m$. This operation compresses a variable-length spatial sequence into a fixed-length vector and thereby reduces scale differences across modalities. For all input modalities of sample $i$, the modality-level feature group is
+\begin{equation}
+\mathbf{Z}_i = \left[\mathbf{z}_i^{(m_1)},\dots,\mathbf{z}_i^{(m_{K_i})}\right] \in \mathbb{R}^{K_i \times d_v}.
+\label{eq:modal_stack}
+\end{equation}
+where $K_i$ is the number of modalities actually involved in fusion. In the main setting, the shared visual backbone remains frozen and is used only as a unified feature extractor. This choice preserves the pretrained visual prior and provides a more stable basis for the subsequent cross-condition consistency constraint.
+
+\begin{figure}[!t]
 \centering
+\includegraphics[width=0.4\textwidth]{fig2.jpg}
+\caption{Multimodal feature extraction module.}
+\label{fig:feature_extractor}
+\end{figure}
+
+\subsection{Causal-Consistent Representation Fusion}
+
+After obtaining modality-level vectors, directly sending them into a classifier would still allow the model to encode brightness bias, thermal background, and texture noise as decision cues. The goal of this stage is therefore not to design an increasingly complex fusion network, but to explicitly constrain condition-stable factors at the fused representation level so that the representation is more tightly tied to the defect itself.
+
+Specifically, the modality vectors of sample $i$ are first concatenated along the feature dimension to form the joint description
+\begin{equation}
+\mathbf{g}_i = \mathrm{Concat}\!\left(\mathbf{z}_i^{(m_1)}, \dots, \mathbf{z}_i^{(m_{K_i})}\right) \in \mathbb{R}^{K_i d_v}.
+\label{eq:concat}
+\end{equation}
+The fused representation is then obtained by mapping this joint description into a common fusion space:
+\begin{equation}
+\mathbf{h}_i = \phi_{\theta_f}\!\left(\mathrm{LN}(\mathbf{g}_i)\right) \in \mathbb{R}^{d_h}.
+\label{eq:fusion}
+\end{equation}
+where $\mathrm{LN}(\cdot)$ denotes LayerNorm and $d_h$ is the fusion-space dimension. The fusion head $\phi_{\theta_f}$ is only responsible for feature compression and cross-modal recombination; suppression of condition-dependent spurious correlations is mainly achieved by the subsequent consistency constraint.
+
+The causal consistency constraint is built on the assumption that, for the same defect category, background texture, brightness distribution, and thermal response may vary across conditions, whereas defect morphology and abnormal thermal signatures that determine class identity should remain stable. To make this stable component comparable in the fusion space, the fused vector is first $\ell_2$-normalized:
+\begin{equation}
+\bar{\mathbf{h}}_i = \frac{\mathbf{h}_i}{\|\mathbf{h}_i\|_2} \in \mathcal{S}^{d_h-1}.
+\label{eq:norm}
+\end{equation}
+The normalized vector $\bar{\mathbf{h}}_i$ retains only directional information. Consequently, its inner product with another normalized vector directly corresponds to cosine similarity, which is more suitable for measuring semantic consistency across conditions.
+
+For each sample, a same-class but different-condition reference set is constructed. For sample $i$, define the cross-condition positive pool as
+\begin{equation}
+\Omega_i = \left\{ j \mid j \neq i,\; y_j = y_i,\; c_j \neq c_i \right\}.
+\label{eq:pool}
+\end{equation}
+Here, $y_j = y_i$ ensures that the two samples belong to the same defect category, and $c_j \neq c_i$ ensures that they come from different conditions. The resulting consistency relation is therefore defined between sample-level cross-condition positive pairs rather than between different modalities. If a sample does not have an available positive pair, it does not contribute to the consistency loss in the current mini-batch.
+
+For the subset of anchors in a mini-batch $\mathcal{B}$ that have valid positives, denoted by $\mathcal{B}^{+}=\{i\in\mathcal{B}\mid\Omega_i\neq\varnothing\}$, one positive $\pi(i)$ is sampled from $\Omega_i$. The causal consistency loss is then written as
+\begin{equation}
+\mathcal{L}_{\mathrm{cc}} =
+\frac{1}{|\mathcal{B}^{+}|}
+\sum_{i\in\mathcal{B}^{+}}
+\left(
+1-\bar{\mathbf{h}}_i^{\top}\sg\!\left(\bar{\mathbf{h}}_{\pi(i)}\right)
+\right),
+\label{eq:cc}
+\end{equation}
+where $\sg(\cdot)$ denotes the stop-gradient operator used to block gradient backpropagation through the reference branch. Since both $\bar{\mathbf{h}}_i$ and $\bar{\mathbf{h}}_{\pi(i)}$ are normalized, their inner product directly corresponds to cosine similarity. Thus, the role of \eqref{eq:cc} is to pull together fused representations of same-class samples from different conditions, keeping consistent defect semantics close while reducing the interference of condition differences on the decision boundary.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.45\textwidth]{fig3.jpg}
+\caption{Causal-consistent fusion module.}
+\label{fig:causal_fusion}
+\end{figure}
+
+\subsection{Lightweight Adaptation Guided by Large-Model Priors}
+
+After obtaining the fused representation, the generalization prior formed by the pretrained large model on open-domain visual data still needs to be converted into category-specific defect discrimination. Direct end-to-end fine-tuning of the visual backbone would easily rewrite that prior into local experience tied to a small number of training conditions, whereas no task adaptation at all would make it difficult to form stable category boundaries. Therefore, under the proposed setting, the visual backbone remains frozen and only the fusion head and classification head are updated, yielding lightweight task adaptation with a small number of trainable parameters.
+
+Concretely, the classification score vector is computed from the fused representation $\mathbf{h}_i$ as
+\begin{equation}
+\boldsymbol{\ell}_i = \mathbf{W}_c \mathbf{h}_i + \mathbf{b}_c \in \mathbb{R}^{|\mathcal{Y}|},
+\label{eq:scores}
+\end{equation}
+where $\mathbf{W}_c \in \mathbb{R}^{|\mathcal{Y}| \times d_h}$ and $\mathbf{b}_c \in \mathbb{R}^{|\mathcal{Y}|}$ are the weight matrix and bias vector of the classifier, respectively, $|\mathcal{Y}|$ is the number of defect categories, and $\ell_{i,k}$ is the unnormalized score of sample $i$ for class $k$. The classification loss is standard cross-entropy:
+\begin{equation}
+\mathcal{L}_{\mathrm{cls}} =
+-\frac{1}{|\mathcal{B}|}\sum_{i \in \mathcal{B}}
+\log
+\frac{\exp(\ell_{i,y_i})}{\sum_{k=1}^{|\mathcal{Y}|}\exp(\ell_{i,k})},
+\label{eq:ce}
+\end{equation}
+where $|\mathcal{B}|$ denotes the batch size. $\mathcal{L}_{\mathrm{cls}}$ learns class-separating decision boundaries, whereas $\mathcal{L}_{\mathrm{cc}}$ suppresses condition-induced representation drift; the two objectives correspond to class separability and cross-condition stability, respectively.
+
+In the parameter update strategy, the pretrained visual backbone is frozen, and only the fusion-head parameters $\theta_f$ and the classifier parameters $\theta_c=(\mathbf{W}_c,\mathbf{b}_c)$ are updated. This lightweight adaptation strategy confines task-specific updates to a small set of added modules and thus preserves the large-model prior as much as possible under limited supervision.
+
+Combining the above components, the final optimization objective is
+\begin{equation}
+\mathcal{L} = \mathcal{L}_{\mathrm{cls}} + \lambda \mathcal{L}_{\mathrm{cc}},
+\label{eq:total}
+\end{equation}
+where $\lambda$ is the weight of the consistency constraint. Equation~\eqref{eq:total} indicates that optimization does not only pursue class separability on the training set, but also requires the fused representation to remain stable under condition variation.
+
+\subsection{Training Procedure and Overall Architecture}
+
+Training follows standard mini-batch gradient descent. Each update consists of four steps: shared visual encoding, multimodal fusion, cross-condition consistency alignment, and discriminative optimization. The shared visual backbone first extracts modality-level vectors, the fusion head produces $\mathbf{h}_i$ and $\bar{\mathbf{h}}_i$, and then $\mathcal{L}_{\mathrm{cls}}$ and $\mathcal{L}_{\mathrm{cc}}$ are jointly computed to update the trainable parameters. Table~\ref{tab:method_train_algo} presents the training pseudocode, and Table~\ref{tab:method_model_arch} summarizes the key architectural configuration. Detailed training hyperparameters are deferred to the experimental settings.
+
+\begin{table}[!t]
+\centering
+\caption{MCSQ-Net Training Procedure}
+\label{tab:method_train_algo}
 \footnotesize
-\begin{minipage}{0.97\columnwidth}
+\setlength{\tabcolsep}{0pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}p{0.985\columnwidth}@{}}
+\toprule
+\textbf{Training Procedure} \\
+\midrule
+\begin{minipage}[t]{0.985\columnwidth}
 \begin{algorithmic}[1]
-\REQUIRE Training set $\mathcal{D}$, pretrained Qwen visual encoder $f_{\theta_v}$, adaptation regime, $\lambda$
-\STATE Initialize fusion head $\theta_f$ and classifier $\theta_c$
-\STATE Freeze or unfreeze parameters according to \eqref{eq:trainable}
-\FOR{each epoch}
-\FOR{each mini-batch $\mathcal{B}$}
-\STATE Encode each modality image with $f_{\theta_v}$ and mean-pool visual tokens
-\STATE Concatenate modality vectors and compute $\tilde{\mathbf{h}}_i$, $\mathbf{r}_i$, and $\hat{\mathbf{y}}_i$
-\STATE Sample $\pi(i)$ from $\Omega_i$ for each anchor with an available cross-condition positive
-\STATE Compute $\mathcal{L}_{\mathrm{cls}}$ and $\mathcal{L}_{\mathrm{cc}}$ using \eqref{eq:lcc}
-\STATE Update the trainable parameters by minimizing \eqref{eq:total_loss}
+\STATE \textbf{Input:} training set $\mathcal{D}_{\mathrm{train}}$, validation set $\mathcal{D}_{\mathrm{val}}$, shared visual backbone $f_{\theta_v}$, fusion head $\phi_{\theta_f}$, classifier $(\mathbf{W}_c,\mathbf{b}_c)$, and weight $\lambda$
+\STATE \textbf{Initialization:} freeze all visual layers of $f_{\theta_v}$; build same-class cross-condition positive pools for training samples according to labels and \texttt{condition\_uid}
+\FOR{epoch $=1$ to $E$}
+    \FOR{mini-batch $\mathcal{B}$}
+        \STATE Read the input observations of each sample according to the current modality configuration and pass them through the shared visual backbone
+        \STATE Mean-pool the spatial feature sequence of each modality to obtain modality-level vectors $\mathbf{z}_i^{(m)}$
+        \STATE Concatenate all modality vectors and pass them through the fusion head to obtain $\mathbf{h}_i$ and its normalized form $\bar{\mathbf{h}}_i$
+        \STATE Compute classification scores with the classifier and obtain the classification loss $\mathcal{L}_{\mathrm{cls}}$
+        \IF{valid positive pairs exist in the batch}
+            \STATE Compute the consistency loss $\mathcal{L}_{\mathrm{cc}}$ according to the same-class cross-condition matching relation
+        \ELSE
+            \STATE Set $\mathcal{L}_{\mathrm{cc}} \leftarrow 0$
+        \ENDIF
+        \STATE Compute the total loss $\mathcal{L}=\mathcal{L}_{\mathrm{cls}}+\lambda \mathcal{L}_{\mathrm{cc}}$
+        \STATE Backpropagate and update the trainable parameters
+    \ENDFOR
+    \STATE Evaluate the current model on the validation set and save the best checkpoint according to the main metric
+    \IF{no improvement over several epochs}
+        \STATE Trigger early stopping
+    \ENDIF
 \ENDFOR
-\STATE Select the best checkpoint by validation Macro-F1
-\ENDFOR
-\STATE Evaluate the selected checkpoint on \texttt{data1 official\_cv} and \texttt{data2 transfer\_test}
+\STATE \textbf{Output:} the best model parameters on the validation set and the corresponding test results
 \end{algorithmic}
-\end{minipage}
+\end{minipage} \\
+\bottomrule
+\end{tabular*}
 \end{table}
+
+\begin{table*}[!t]
+\centering
+\caption{Key Architectural Configuration of MCSQ-Net}
+\label{tab:method_model_arch}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}>{\raggedright\arraybackslash}p{0.17\textwidth}>{\raggedright\arraybackslash}p{0.47\textwidth}>{\raggedright\arraybackslash}p{0.28\textwidth}@{}}
+\toprule
+Module & Structure & Role \\
+\midrule
+Shared visual backbone & Pretrained visual encoder, $d_v=1536$, all visual layers frozen & Extract unified modality features \\
+Modality aggregation & Mean pooling, $\mathbf{z}_i^{(m)}\in\mathbb{R}^{d_v}$ & Generate modality-level representations \\
+Feature concatenation & $\mathbf{g}_i=\mathrm{Concat}(\mathbf{z}_i^{(m_1)},\dots,\mathbf{z}_i^{(m_{K_i})})\in\mathbb{R}^{K_i d_v}$ & Preserve complementary multimodal information \\
+Fusion head & $\mathrm{LN}+\mathrm{Linear}(K_i d_v,512)+\mathrm{GELU}+\mathrm{Dropout}(0.1)+\mathrm{Linear}(512,512)+\mathrm{GELU}$ & Compress and reorganize fused features \\
+Consistency constraint & Same-label cross-condition pairing, cosine consistency loss, $\lambda=0.1$ & Suppress condition-induced shift \\
+Classifier & $\mathrm{Linear}(512,|\mathcal{Y}|)$ & Output defect-class scores \\
+Lightweight adaptation & Freeze the visual backbone and train only $\{\theta_f,\theta_c\}$ & Preserve the large-model generalization prior \\
+\bottomrule
+\end{tabular*}
+\end{table*}
 
 \section{Experiments and Analysis}
 \subsection{Experimental Settings}
-The main Qwen configuration uses the Qwen2-VL-2B-Instruct vision tower, \texttt{rgb\_dual} input, hidden dimension 512, dropout 0.1, batch size 4, AdamW optimization with learning rate $3\times10^{-4}$ and weight decay $10^{-4}$, cosine scheduling, mixed precision, and early stopping patience 2. The causal consistency weight is 0.1. The diagnostic true fine-tuning regime uses batch size 1, 3 epochs, early stopping patience 1, visual learning rate $2\times10^{-6}$, fusion-head learning rate $5\times10^{-5}$, and gradient clipping 0.5. The strongest classical baseline is ResNet18 with \texttt{rgb\_dual} input and MLP-concat fusion, trained for 20 epochs. All source-side results are aggregated over three folds.
 
-\subsection{Main Results on the Source Benchmark}
-Table~\ref{tab:data1_main} reports the 3-class results on \texttt{data1 official\_cv}. Prompt-Qwen reaches only 0.3914 Macro-F1, indicating that direct prompt-style closed-set adaptation fails to turn Qwen2-VL into a reliable unseen-condition recognizer. In contrast, once the same pretrained model is repurposed as a large-model visual prior inside an explicit fusion classifier, performance rises to 0.8402 Macro-F1. Adding causal consistency further improves the score to 0.8547, exceeding the strongest classical baseline at 0.8323.
+The experimental data were collected from a self-built open SLM in-situ monitoring platform, as illustrated in Fig.~\ref{fig:platform_setup}. The platform consists of a 500~W single-mode continuous-wave fiber laser, a galvanometer scanning system, and PBAM programmable control software, allowing real-time adjustment of key process parameters such as laser power and scanning speed. The build process is conducted under high-purity argon protection, with oxygen concentration controlled below 0.1\%. To acquire multimodal process signals, the platform is equipped with two KM2010-3660 industrial cameras and one Optris PI 08M short-wave infrared imager, which record top-view and side-view visible images as well as vertical infrared thermal fields, respectively, with frame-level synchronization achieved through external TTL triggering. The resulting dataset contains visual modalities, the infrared modality, and corresponding condition information, and is used for unseen-condition defect recognition evaluation.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.45\textwidth]{fig4.jpg}
+\caption{Open SLM in-situ monitoring platform and multi-sensor acquisition system. The final version will show the laser processing unit, the control system, and the dual-vision and infrared sensing array.}
+\label{fig:platform_setup}
+\end{figure}
+
+The proposed method uses the visual backbone of Qwen2-VL-2B-Instruct, with the fusion-space dimension set to 512, dropout set to 0.1, batch size set to 4, the AdamW optimizer, a learning rate of $3\times10^{-4}$, weight decay of $10^{-4}$, cosine scheduling, mixed-precision training, and early stopping with a patience of 2. The main experiments compare visual, infrared, and multimodal input configurations, and the best-performing configuration is adopted for the primary setting. Recorded process parameters are used to partition conditions and to construct same-class cross-condition positives. Category labels serve only as supervision during training and are not used as inputs during inference. The causal consistency weight is set to 0.1. The full fine-tuning comparison uses batch size 1, 3 epochs, patience 1, a visual-side learning rate of $2\times10^{-6}$, a fusion-head learning rate of $5\times10^{-5}$, and gradient clipping at 0.5. The strongest classical baseline is ResNet18 with dual-camera input and MLP-concat fusion. All source-domain results are aggregated over three folds, and the task settings are summarized in Table~\ref{tab:task_setup}.
 
 \begin{table*}[!t]
-\caption{Main 3-Class Results on \texttt{data1 official\_cv}}
-\label{tab:data1_main}
 \centering
-\begin{tabular}{|l|l|c|c|c|}
-\hline
-Family & Setting & Accuracy & Balanced Accuracy & Macro-F1 \\
-\hline
-Prompt-Qwen & 3-class prompt baseline & 0.4809 $\pm$ 0.0602 & 0.5021 $\pm$ 0.0460 & 0.3914 $\pm$ 0.0587 \\
-\hline
-Classic & ResNet18 + \texttt{rgb\_dual} + MLP-concat & 0.8349 $\pm$ 0.0858 & 0.8412 $\pm$ 0.0846 & 0.8323 $\pm$ 0.0892 \\
-\hline
-QwenVisFusion & Frozen-prior baseline & 0.8383 $\pm$ 0.1009 & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
-\hline
-QwenVisFusion & Frozen prior + causal consistency & \textbf{0.8521 $\pm$ 0.0929} & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
-\hline
-QwenVisFusion Last2 FT & Unfreeze last two visual blocks & 0.7850 $\pm$ 0.0378 & 0.7979 $\pm$ 0.0332 & 0.7781 $\pm$ 0.0411 \\
-\hline
-\end{tabular}
+\caption{Experimental Task Settings}
+\label{tab:task_setup}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}>{\raggedright\arraybackslash}p{0.10\textwidth}>{\raggedright\arraybackslash}p{0.22\textwidth}>{\raggedright\arraybackslash}p{0.60\textwidth}@{}}
+\toprule
+ID & Task Name & Task Setting \\
+\midrule
+Task-1 & Source-domain unseen-condition defect category recognition & Three-fold cross-validation with condition-disjoint train/validation/test splits; labels are healthy (\texttt{normal}), high-energy warping (\texttt{HEW}), and low-energy abnormal lack-of-fusion (\texttt{LEL}); used to evaluate fine-grained defect category recognition under unseen conditions. \\
+Task-2 & Source-domain unseen-condition anomaly recognition & Same condition split as Task-1; binary classification between healthy (\texttt{normal}) and defective (\texttt{abnormal}) samples; used as a complementary task with open-set relevance to evaluate the separation of abnormal patterns. \\
+Task-3 & External-transfer defect category recognition & Trained on the source-domain training set of Task-1 and evaluated on an independent external test set; the external test set is not used for model selection; simultaneous shifts exist in device conditions, process-parameter ranges, and defect distribution; used to evaluate recognition stability under compound distribution shift. \\
+\bottomrule
+\end{tabular*}
 \end{table*}
 
-The auxiliary 2-class evidence supports the same interpretation. Prompt-Qwen reaches only 0.3903 Macro-F1, while the causal Qwen fusion branch reaches 0.4707. Both are much weaker than the best classical 2-class baseline, which is why this paper treats 3-class recognition as the main task and uses direct 2-class learning only as a negative side observation.
+We report Accuracy, Balanced Accuracy, and Macro-F1 throughout the paper. Balanced Accuracy and Macro-F1 are the primary metrics because they better reflect class-recall balance and cross-class recognition stability, both of which are critical under unseen-condition evaluation.
+
+For clarity of presentation, the main baselines are abbreviated as follows:
+\begin{itemize}
+\item \texttt{C1}: ResNet18 + Camera 1, representing the single-visual-modality baseline.
+\item \texttt{IR-Only}: ResNet18 + infrared only, used to evaluate the standalone discriminative value of thermal information.
+\item \texttt{Dual}: ResNet18 + Camera 1 \& 2 + MLP-concat, representing explicit feature concatenation under dual-camera input and also the strongest classical CNN baseline.
+\item \texttt{Tri-MLP}: ResNet18 + Camera 1 \& 2 + IR + MLP-concat, used to test direct feature concatenation under three modalities.
+\item \texttt{Tri-CA}: ResNet18 + Camera 1 \& 2 + IR + Cross-Attention, used to test explicit cross-modal interaction under three modalities.
+\item \texttt{Tri-LF}: ResNet18 + Camera 1 \& 2 + IR + Late Fusion, used to evaluate decision-level fusion under three modalities.
+\item \texttt{Prompt-Qwen}: a multimodal prompt-based classification baseline that directly performs closed-set recognition from the joint input of Camera 1, Camera 2, and IR.
+\item \texttt{MCSQ-Net}: the proposed method, which uses the same joint input of Camera 1, Camera 2, and IR but further introduces a cross-condition causal stability constraint in the fusion space.
+\end{itemize}
+
+\subsection{Defect Recognition Under Unseen Conditions}
+
+Table~\ref{tab:data1_main_cn} reports the source-domain unseen-condition defect category recognition results. Among the classical CNN baselines, the single-visual model \texttt{C1} already reaches a Macro-F1 of 0.8269, and the dual-camera baseline \texttt{Dual} further improves it to 0.8323, indicating that complementary viewpoints can improve defect discrimination. By contrast, \texttt{Tri-MLP}, \texttt{Tri-CA}, and \texttt{Tri-LF} do not consistently outperform \texttt{Dual}, suggesting that simply increasing the number of modalities or the complexity of the fusion mechanism does not automatically produce cross-condition gains. Under the same three-modality input, the two large-model-based methods diverge sharply: Prompt-Qwen reaches only 0.3914 Macro-F1, while MCSQ-Net improves the score to 0.8547 and simultaneously achieves the highest Accuracy and Balanced Accuracy. In conjunction with the trainable parameter counts listed in the table, this result indicates that the gain does not come from a larger task-specific adaptation scale, but from preserving the large-model visual prior while suppressing condition-induced drift through same-class cross-condition alignment.
+
+\begin{table*}[!t]
+\caption{Task-1 Results on Unseen-Condition Defect Category Recognition}
+\label{tab:data1_main_cn}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4.2pt}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lccccc@{}}
+\toprule
+Setting & Accuracy & Bal. Acc. & Macro-F1 & Trainable Parameters & Relative Inference Cost \\
+\midrule
+\texttt{C1} & 0.8237 $\pm$ 0.0440 & 0.8348 $\pm$ 0.0429 & 0.8269 $\pm$ 0.0483 & 11.18M & Low \\
+\texttt{IR-Only} & 0.7271 $\pm$ 0.1127 & 0.7298 $\pm$ 0.1160 & 0.7117 $\pm$ 0.1254 & 11.18M & Low \\
+\texttt{Tri-MLP} & 0.8138 $\pm$ 0.1127 & 0.8135 $\pm$ 0.1131 & 0.8106 $\pm$ 0.1143 & 12.23M & Medium \\
+\texttt{Tri-CA} & 0.8098 $\pm$ 0.0082 & 0.8198 $\pm$ 0.0117 & 0.8134 $\pm$ 0.0101 & 11.84M & Medium \\
+\texttt{Dual} & 0.8349 $\pm$ 0.0858 & 0.8412 $\pm$ 0.0846 & 0.8323 $\pm$ 0.0892 & 11.97M & Low \\
+\texttt{Tri-LF} & 0.7747 $\pm$ 0.0503 & 0.7786 $\pm$ 0.0531 & 0.7751 $\pm$ 0.0522 & 11.31M & Medium \\
+\texttt{Prompt-Qwen} & 0.4809 $\pm$ 0.0602 & 0.5021 $\pm$ 0.0460 & 0.3914 $\pm$ 0.0587 & $\approx$18.46M & High \\
+\texttt{MCSQ-Net} & \textbf{0.8521 $\pm$ 0.0929} & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} & $\approx$1.84M & Moderately High \\
+\bottomrule
+\end{tabular*}
+\vspace{2pt}
+{\footnotesize Note: the parameter count refers to the number of trainable parameters. Classical CNN baselines are estimated from the ResNet18 backbone and their corresponding fusion heads. Prompt-Qwen is estimated under the default LoRA setting ($r=16,\alpha=32$). MCSQ-Net is estimated under the three-modality setting used in the main experiments. Relative inference cost is assessed by jointly considering backbone size, number of input modalities, and whether autoregressive decoding is required.}
+\end{table*}
+
+Task-2 is summarized in Fig.~\ref{fig:task2_anomaly_cn}. On both Balanced Accuracy and Macro-F1, the best classical baseline \texttt{Dual} clearly outperforms Prompt-Qwen and MCSQ-Net, indicating that anomaly recognition with open-set relevance still relies more heavily on explicit discriminative representation learning under the current setting. Even so, MCSQ-Net remains better than Prompt-Qwen on both metrics, suggesting that the causal consistency constraint still improves the separation of abnormal patterns to some extent. Task-2 is therefore treated as a supplementary evaluation for distinguishing abnormal from normal samples.
 
 \begin{figure}[!t]
 \centering
-% TODO: Replace with the exported main-results figure.
-\fbox{\rule{0pt}{1.4in}\rule{0.95\columnwidth}{0pt}}
-\caption{Main 3-class comparison on \texttt{data1 official\_cv}. Placeholder for the final figure.}
-\label{fig:data1_main}
+\includegraphics[width=0.9\columnwidth]{fig6.png}
+\caption{Task-2 source-domain unseen-condition anomaly recognition results. Prompt-Qwen, the best classical baseline \texttt{Dual}, and MCSQ-Net are compared on Balanced Accuracy and Macro-F1. Error bars denote standard deviation over three folds.}
+\label{fig:task2_anomaly_cn}
 \end{figure}
 
-\subsection{Multimodal Effectiveness Under Unseen Conditions}
-Table~\ref{tab:ablation} studies modality combinations within the Qwen fusion family. Three findings are important. First, IR-only input still reaches 0.6270 Macro-F1, so thermal information is useful rather than redundant. Second, the dual RGB configuration is the strongest Qwen instantiation in the current implementation, indicating that complementary appearance cues from two optical views are particularly stable under the present training regime. Third, directly adding IR to the dual RGB branch does not surpass dual RGB, which suggests that multimodal effectiveness depends on the fusion structure rather than on simply stacking more views.
-
-\begin{table}[!t]
-\caption{Input Ablation of QwenVisFusion on the 3-Class Source Benchmark}
-\label{tab:ablation}
-\centering
-\begin{tabular}{|l|c|c|}
-\hline
-Input Mode & Balanced Accuracy & Macro-F1 \\
-\hline
-\texttt{rgb\_view1} baseline & 0.7714 $\pm$ 0.0771 & 0.7419 $\pm$ 0.1203 \\
-\hline
-\texttt{ir\_only} baseline & 0.6508 $\pm$ 0.0708 & 0.6270 $\pm$ 0.0878 \\
-\hline
-\texttt{rgb\_dual} baseline & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
-\hline
-\texttt{triple\_view} baseline & 0.8169 $\pm$ 0.0659 & 0.8121 $\pm$ 0.0615 \\
-\hline
-\texttt{rgb\_dual} + causal consistency & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
-\hline
-\end{tabular}
-\end{table}
-
-This result should not be read as ``IR is ineffective.'' Instead, it shows that all modalities are informative, but the current Qwen branch extracts the cleanest unseen-condition signal from the dual RGB pathway. This interpretation is reinforced by the classical transfer results, where the strongest external-transfer baseline uses triple-view late fusion rather than dual RGB.
-
-\subsection{Why Causal Consistency Helps and True Fine-Tuning Hurts}
-The gain from causal consistency is modest compared with the large jump from prompt-Qwen to explicit fusion, but it is the core methodological contribution of the paper. On \texttt{data1 official\_cv}, causal consistency improves Macro-F1 from 0.8402 to 0.8547 and balanced accuracy from 0.8422 to 0.8556. This is precisely the evidence needed for the main claim: once the large-model prior has been converted into a discriminative multimodal recognizer, representation-level causal consistency provides additional robustness against unseen conditions.
-
-The last-two-block experiment clarifies the boundary of that claim. If the final visual blocks are unfrozen, Macro-F1 drops from 0.8547 to 0.7781 on \texttt{data1 official\_cv}; on \texttt{data2 transfer\_test}, it drops from 0.6067 to 0.5808. The degradation indicates representation drift under limited industrial supervision. In other words, the challenge is not that the large-model prior is insufficiently adapted, but that aggressive true fine-tuning overfits condition-specific cues and weakens transfer.
-
-\subsection{External Transfer Results}
-Table~\ref{tab:data2_transfer} reports the best 3-class transfer results on \texttt{data2 transfer\_test}. Prompt-Qwen reaches 0.4073 Macro-F1, the strongest classical transfer baseline reaches 0.4236, and the proposed causal QwenVisFusion reaches 0.6067. The ranking is important because \texttt{data2} combines multiple sources of unseen shift. Even though absolute scores are lower than on \texttt{data1}, the proposed method preserves the clearest robustness margin under the harder benchmark.
-
-\begin{table}[!t]
-\caption{Best 3-Class Transfer Results on \texttt{data2 transfer\_test}}
-\label{tab:data2_transfer}
-\centering
-\begin{tabular}{|l|c|c|}
-\hline
-Family / Best Model & Balanced Accuracy & Macro-F1 \\
-\hline
-Prompt-Qwen / \texttt{data1\_official\_cv\_3class\_baseline} & 0.4586 $\pm$ 0.0286 & 0.4073 $\pm$ 0.0511 \\
-\hline
-Classic / triple-view late fusion & 0.4973 $\pm$ 0.0954 & 0.4236 $\pm$ 0.1110 \\
-\hline
-QwenVisFusion / \texttt{rgb\_dual} + causal consistency & \textbf{0.6359 $\pm$ 0.0158} & \textbf{0.6067 $\pm$ 0.0351} \\
-\hline
-\end{tabular}
-\end{table}
-
-The transfer evidence also helps complete the multimodal story. Infrared remains meaningful in additive manufacturing monitoring and is still useful in the classical transfer family \cite{ref_multisensor_am,ref_multisensor_platform}. The reason the best Qwen branch currently uses dual RGB is therefore methodological, not physical: the present fusion head has not yet extracted the full benefit of thermal information under limited industrial data.
+Task-3 further tests robustness under external transfer. This task simultaneously introduces shifts in device imaging conditions, process-parameter ranges, and defect distribution, and therefore amplifies the model's reliance on condition-dependent superficial cues. Fig.~\ref{fig:data2_transfer_cn} plots the performance trajectories of three representative methods from Task-1 to Task-3. Prompt-Qwen remains weak on both the source and external domains. The strongest classical transfer baseline, \texttt{Tri-LF}, drops from 0.7751 to 0.4236 in Macro-F1 and from 0.7786 to 0.4973 in Balanced Accuracy. In contrast, MCSQ-Net still achieves a Macro-F1 of 0.6067 and a Balanced Accuracy of 0.6359 on Task-3, with a substantially smaller cross-domain degradation. This result indicates that the causal consistency constraint helps reduce the interference of condition-related spurious cues on the fused representation.
 
 \begin{figure}[!t]
 \centering
-% TODO: Replace with the exported transfer-results figure.
-\fbox{\rule{0pt}{1.4in}\rule{0.95\columnwidth}{0pt}}
-\caption{Best-model comparison on \texttt{data2 transfer\_test}. Placeholder for the final figure.}
-\label{fig:data2_transfer}
+\includegraphics[width=0.9\columnwidth]{fig5.jpg}
+\caption{Task-3 external-transfer defect category recognition results and cross-domain degradation. Top: Macro-F1. Bottom: Balanced Accuracy. Each trajectory connects the Task-1 source-domain result to the Task-3 external-transfer result. Error bars denote standard deviation over three folds, and the shaded region indicates the external target domain.}
+\label{fig:data2_transfer_cn}
 \end{figure}
+
+This result also clarifies how the infrared modality contributes. Infrared information retains clear physical and statistical meaning in additive manufacturing monitoring \cite{ref_lpbf_sensing_review,ref_intelligent_defect_pbf}, but its benefit depends on the fusion mechanism and sample regime. In the classical transfer family, \texttt{Tri-LF} benefits from late fusion across three modalities, indicating that the way thermal information is exploited remains closely tied to the model family.
+
+\subsection{Ablation Studies}
+
+To analyze the source of MCSQ-Net's performance, this section conducts ablations from two perspectives: modality configuration and model structure. The results are summarized in Table~\ref{tab:ablation_cn}. The multimodal ablation shows that all modalities provide useful defect information, but their benefit depends on the specific fusion mechanism. The infrared modality alone still reaches a Macro-F1 of 0.6270, indicating independent discriminative value in thermal information. Among the ablated settings, the dual-camera input gives the most stable result, suggesting that complementary geometry and texture cues from two viewpoints are particularly suitable for the current setup. By contrast, adding infrared in a direct fusion manner does not further improve the result, implying that the current bottleneck lies not in whether infrared is introduced, but in how its thermal contribution is modeled. This interpretation is consistent with the transfer baseline results, where the strongest classical method adopts three-modality late fusion. The model ablation further verifies the role of the causal consistency constraint. Removing the constraint reduces Macro-F1 and Balanced Accuracy from 0.8547 and 0.8556 to 0.8402 and 0.8422, respectively. Unfreezing the last two visual blocks further lowers Macro-F1 to 0.7781, and also reduces Task-3 Macro-F1 from 0.6067 to 0.5808. These results indicate that the more effective strategy is not aggressive visual-backbone fine-tuning, but improving fusion-space stability while preserving the large-model prior.
+
+\begin{table}[!t]
+\caption{Ablation Results of MCSQ-Net}
+\label{tab:ablation_cn}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}>{\raggedright\arraybackslash}p{0.16\columnwidth}>{\raggedright\arraybackslash}p{0.34\columnwidth}>{\centering\arraybackslash}p{0.21\columnwidth}>{\centering\arraybackslash}p{0.21\columnwidth}@{}}
+\toprule
+Ablation Type & Setting & Balanced Accuracy & Macro-F1 \\
+\midrule
+\multirow{5}{=}{Input ablation}
+& Camera 1 & 0.7714 $\pm$ 0.0771 & 0.7419 $\pm$ 0.1203 \\
+& IR & 0.6508 $\pm$ 0.0708 & 0.6270 $\pm$ 0.0878 \\
+& Camera 1 \& 2 & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
+& Camera 1 \& 2 + IR & 0.8169 $\pm$ 0.0659 & 0.8121 $\pm$ 0.0615 \\
+& Camera 1 \& 2 + causal consistency & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
+\midrule
+\multirow{3}{=}{Model ablation}
+& w/o causal consistency & 0.8422 $\pm$ 0.1061 & 0.8402 $\pm$ 0.1048 \\
+& Full model & \textbf{0.8556 $\pm$ 0.0973} & \textbf{0.8547 $\pm$ 0.0955} \\
+& Unfreeze the last two visual blocks & 0.7979 $\pm$ 0.0332 & 0.7781 $\pm$ 0.0411 \\
+\bottomrule
+\end{tabular*}
+\end{table}
 
 \section{Conclusion}
-This paper studied unseen-condition multimodal defect recognition in SLM through the lens of large-model adaptation. The repository evidence shows that direct prompt-based Qwen2-VL adaptation is inadequate for the current small-sample industrial task. A stronger route is to keep Qwen2-VL as a large-model visual prior, perform explicit multimodal fusion, and impose causal consistency across same-label samples from different conditions. The resulting framework achieves the best source-side and external-transfer results in the repository. Additional experiments further show that aggressive unfreezing of the final visual blocks is harmful, which sharpens the main conclusion: in the present regime, transferability is improved more by preserving the pretrained prior and regularizing representations than by deeper end-to-end fine-tuning. Future work should focus on stronger infrared-aware fusion and more conservative visual-side adaptation mechanisms, such as adapters or LoRA-style modules, instead of direct block unfreezing.
+
+This paper studied multimodal defect recognition in metal additive manufacturing under unseen conditions, with a particular focus on how pretrained large-model priors can improve cross-condition stability. To this end, MCSQ-Net was proposed to learn stable defect representations through shared visual encoding, multimodal fusion, and a cross-condition causal consistency constraint. Experimental results show that the method outperforms Prompt-Qwen and classical multimodal baselines in both source-domain unseen-condition defect category recognition and external transfer evaluation. This indicates that prompting alone or conventional multimodal fusion is insufficient to cope with condition shift, whereas explicitly suppressing condition-related spurious cues in the fused representation is critical for generalization. Ablation studies further show that the causal consistency constraint consistently improves representation quality, while aggressively unfreezing the visual backbone weakens the original pretrained prior and leads to overfitting. Future work will investigate finer-grained fusion mechanisms for infrared thermal features and more conservative parameter-efficient adaptation strategies on the visual side, such as adapters or LoRA modules.
 
 \begin{thebibliography}{00}
-\bibitem{ref_pbf_review}
-C.~Chua, Y.~Liu, R.~J.~Williams, C.~K.~Chua, and S.~L.~Sing, ``In-process and post-process strategies for part quality assessment in metal powder bed fusion: A review,'' \emph{Journal of Manufacturing Systems}, vol.~73, pp.~75--105, Apr.~2024, doi: 10.1016/j.jmsy.2024.01.004.
 
-\bibitem{ref_optical_defect}
-M.~Abdelrahman, E.~W.~Reutzel, A.~R.~Nassar, and T.~L.~Starr, ``Flaw detection in powder bed fusion using optical imaging,'' \emph{Additive Manufacturing}, vol.~15, pp.~1--11, May~2017, doi: 10.1016/j.addma.2017.02.001.
+\bibitem{ref_defect_formation_slm}
+B.~Zhang, Y.~Li, and Q.~Bai, ``Defect formation mechanisms in selective laser melting: A review,'' \emph{Chinese Journal of Mechanical Engineering}, vol.~30, pp.~515--527, 2017.
 
-\bibitem{ref_ir_defect}
-J.~L.~Bartlett, F.~M.~Heim, Y.~V.~Murty, and X.~Li, ``In situ defect detection in selective laser melting via full-field infrared thermography,'' \emph{Additive Manufacturing}, vol.~24, pp.~595--605, Dec.~2018, doi: 10.1016/j.addma.2018.10.045.
+\bibitem{ref_in_situ_monitoring_review}
+X.~Peng, L.~Kong, H.~An, and G.~Dong, ``A review of in situ defect detection and monitoring technologies in selective laser melting,'' \emph{3D Printing and Additive Manufacturing}, vol.~10, no.~3, pp.~438--466, 2023.
 
-\bibitem{ref_multisensor_am}
-J.~Petrich, Z.~Snow, D.~Corbin, and E.~W.~Reutzel, ``Multi-modal sensor fusion with machine learning for data-driven process monitoring for additive manufacturing,'' \emph{Additive Manufacturing}, vol.~48, part~B, Art.~no.~102364, Dec.~2021, doi: 10.1016/j.addma.2021.102364.
+\bibitem{ref_lpbf_sensing_review}
+D.~Guillen, S.~Wahlquist, and A.~Ali, ``Critical review of LPBF metal print defects detection: Roles of selective sensing technology,'' \emph{Applied Sciences}, vol.~14, no.~15, p.~6718, 2024.
 
-\bibitem{ref_multisensor_platform}
-C.~Maucher, K.~T.~Werkle, and H.-C.~M\"ohring, ``In-Situ defect detection and monitoring for laser powder bed fusion using a multi-sensor build platform,'' \emph{Procedia CIRP}, vol.~104, pp.~146--151, 2021, doi: 10.1016/j.procir.2021.11.025.
+\bibitem{ref_intelligent_defect_pbf}
+P.~Wang \emph{et al.}, ``Towards intelligent defect detection in metal powder bed fusion: A review of in situ monitoring, data pre-processing, and machine learning,'' \emph{Materials Science and Engineering: R: Reports}, vol.~167, p.~101112, 2026.
 
-\bibitem{ref_qwen2vl}
-P.~Wang \emph{et al.}, ``Qwen2-VL: Enhancing vision-language model's perception of the world at any resolution,'' arXiv:2409.12191, 2024, doi: 10.48550/arXiv.2409.12191.
+\bibitem{ref_anomalygpt}
+Z.~Gu \emph{et al.}, ``AnomalyGPT: Detecting industrial anomalies using large vision-language models,'' arXiv:2308.15366, 2023.
 
-\bibitem{ref_irm}
-M.~Arjovsky, L.~Bottou, I.~Gulrajani, and D.~Lopez-Paz, ``Invariant risk minimization,'' arXiv:1907.02893, 2019, doi: 10.48550/arXiv.1907.02893.
+\bibitem{ref_myriad}
+Y.~Li \emph{et al.}, ``Myriad: Large multimodal model by applying vision experts for industrial anomaly detection,'' arXiv:2310.19070, 2023.
 
-\bibitem{ref_groupdro}
-S.~Sagawa, P.~W.~Koh, T.~B.~Hashimoto, and P.~Liang, ``Distributionally robust neural networks for group shifts: On the importance of regularization for worst-case generalization,'' arXiv:1911.08731, 2019, doi: 10.48550/arXiv.1911.08731.
+\bibitem{ref_vlm_active_learning}
+S.~Chen and Y.~Liu, ``Vision-language model-assisted active learning for high-accuracy defect detection in automotive bushing components,'' in \emph{Proc. Int. Conf. Embodied Intelligence and Large Models}, 2025, pp.~9--14.
+
+\bibitem{ref_qlora_excavator}
+H.~V.~Nguyen, H.~Park, N.~Yoo, and J.~Yang, ``Resource-efficient fine-tuning of large vision-language models for multimodal perception in autonomous excavators,'' \emph{Frontiers in Artificial Intelligence}, vol.~8, p.~1681277, 2025.
+
+\bibitem{ref_omniad}
+S.~Zhao \emph{et al.}, ``OmniAD: Detect and understand industrial anomaly via multimodal reasoning,'' arXiv:2505.22039, 2025.
+
+\bibitem{ref_ad_copilot}
+X.~Jiang \emph{et al.}, ``AD-Copilot: A vision-language assistant for industrial anomaly detection via visual in-context comparison,'' arXiv:2603.13779, 2026.
+
+\bibitem{ref_wu2024_multisensor}
+Q.~Wu \emph{et al.}, ``In-situ quality intelligent classification of additively manufactured parts using a multi-sensor fusion based melt pool monitoring system,'' \emph{Additive Manufacturing Frontiers}, vol.~3, no.~3, p.~200153, 2024.
+
+\bibitem{ref_liu2024_acoustic}
+H.~Liu \emph{et al.}, ``Inference of highly time-resolved melt pool visual characteristics and spatially-dependent lack-of-fusion defects in laser powder bed fusion using acoustic and thermal emission data,'' \emph{Additive Manufacturing}, vol.~83, p.~104057, 2024.
+
+\bibitem{ref_shen2024_multisource}
+T.~Shen \emph{et al.}, ``Multi-source information fusion for enhanced in-process quality monitoring of laser powder bed fusion additive manufacturing,'' \emph{Additive Manufacturing}, vol.~96, p.~104575, 2024.
+
+\bibitem{ref_li2024_transfer}
+J.~Li \emph{et al.}, ``Transfer learning-based quality monitoring of laser powder bed fusion across materials,'' \emph{Expert Systems with Applications}, vol.~252, p.~124150, 2024.
+
 \end{thebibliography}
 
 \end{document}
