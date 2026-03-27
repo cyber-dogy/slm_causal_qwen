@@ -360,14 +360,13 @@ MCSQ-Net & \textbf{0.8521 $\pm$ 0.0929} & \textbf{0.8556 $\pm$ 0.0973} & \textbf
 {\footnotesize 注：表中参数量为可训练参数量。经典 CNN 对照按 ResNet18 主干及对应融合头统计；Prompt-Qwen 按默认 LoRA 设定（$r=16,\alpha=32$）估算；MCSQ-Net 按主实验结果对应的双视觉配置统计。相对推理代价综合考虑编码主干规模、输入模态数及是否需要自回归解码。}
 \end{table*}
 
-Task-2 的结果与 Task-1 保持一致趋势。Prompt-Qwen 和 MCSQ-Net 的 Macro-F1 分别为 0.3903 和 0.4707，仍低于经典最优二分类基线。这说明在当前设定下，具有开集含义的异常识别仍更依赖显式判别式表征学习；因此，本文将 Task-2 作为补充评估，用于考察模型对异常模式的分离能力。
+Task-2 的结果如图~\ref{fig:task2_anomaly_cn} 所示。无论在 Balanced Accuracy 还是 Macro-F1 上，最佳经典基线 `Dual` 均明显优于 Prompt-Qwen 和 MCSQ-Net，说明在当前设定下，具有开集含义的异常识别仍更依赖显式判别式表征学习。与此同时，MCSQ-Net 在两项指标上仍高于 Prompt-Qwen，表明因果一致性约束虽不足以弥补二分类异常识别中判别边界的收缩，但能够在一定程度上改善异常模式的分离质量。因此，Task-2 更适合作为补充评估，用于分析模型对异常与正常样本的区分能力。
 
 \begin{figure}[!t]
 \centering
-% TODO: 替换为正式主结果图。
-\fbox{\rule{0pt}{1.4in}\rule{0.95\columnwidth}{0pt}}
-\caption{Task-1 未见工况缺陷类别识别结果占位图。}
-\label{fig:data1_main_cn}
+\includegraphics[width=0.9\columnwidth]{fig6.png}
+\caption{Task-2 源域未见工况异常识别结果。图中比较了 Prompt-Qwen、最佳经典基线 `Dual` 与 MCSQ-Net 在 Balanced Accuracy 和 Macro-F1 上的表现，误差棒表示 3 折标准差。}
+\label{fig:task2_anomaly_cn}
 \end{figure}
 
 Task-3 进一步检验了模型在外部迁移场景下的稳健性。与 Task-1 相比，该任务同时引入设备成像条件、工艺参数范围和缺陷分布的复合偏移，因此更容易放大模型对工况相关表面线索的依赖。图~\ref{fig:data2_transfer_cn} 给出了三种代表性方法从 Task-1 到 Task-3 的性能迁移轨迹。Prompt-Qwen 在源域与外部域上均保持较低水平；经典最优迁移基线 `Tri-LF` 的 Macro-F1 由 0.7751 降至 0.4236，Balanced Accuracy 由 0.7786 降至 0.4973。相比之下，MCSQ-Net 在 Task-3 上仍取得 0.6067 的 Macro-F1 和 0.6359 的 Balanced Accuracy，且跨域退化幅度更小，说明因果一致性约束能够削弱工况相关伪线索对融合表示的干扰，并保留更稳定的缺陷语义。

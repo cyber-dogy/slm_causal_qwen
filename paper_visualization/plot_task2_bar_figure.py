@@ -17,15 +17,16 @@ METRICS = {
     "Balanced Accuracy": {
         "means": [0.5000, 0.8506, 0.5429],
         "stds": [0.0000, 0.0981, 0.0606],
-        "color": "#B8D6F2",
+        "color": "#7AA6DC",
+        "hatch": "///",
     },
     "Macro-F1": {
         "means": [0.3903, 0.8588, 0.4707],
         "stds": [0.0023, 0.1011, 0.1145],
-        "color": "#D98C5F",
+        "color": "#D98B5A",
+        "hatch": "\\\\\\",
     },
 }
-METHOD_COLORS = ["#8C8C8C", "#3A7CA5", "#2A9D8F"]
 
 
 def set_style() -> None:
@@ -39,10 +40,9 @@ def set_style() -> None:
             "axes.linewidth": 0.8,
             "grid.color": "#D9D9D9",
             "grid.linewidth": 0.55,
-            "axes.facecolor": "#FCFCFC",
+            "axes.facecolor": "#FBFBFB",
             "font.size": 9,
             "axes.labelsize": 9,
-            "axes.titlesize": 10,
             "legend.fontsize": 8.5,
         }
     )
@@ -56,7 +56,7 @@ def build_figure() -> Path:
     set_style()
     ensure_dirs()
 
-    fig, ax = plt.subplots(figsize=(4.6, 2.8))
+    fig, ax = plt.subplots(figsize=(4.8, 3.15))
     fig.patch.set_facecolor("white")
 
     x = np.arange(len(METHODS))
@@ -70,7 +70,8 @@ def build_figure() -> Path:
             width=width,
             color=metric["color"],
             edgecolor="#4F4F4F",
-            linewidth=0.6,
+            linewidth=0.7,
+            hatch=metric["hatch"],
             label=metric_name,
             zorder=2,
         )
@@ -84,10 +85,10 @@ def build_figure() -> Path:
             capsize=2.6,
             zorder=3,
         )
-        for bar, value in zip(bars, metric["means"]):
+        for bar, value, std in zip(bars, metric["means"], metric["stds"]):
             ax.text(
                 bar.get_x() + bar.get_width() / 2,
-                value + 0.025,
+                value + std + 0.02,
                 f"{value:.3f}",
                 ha="center",
                 va="bottom",
@@ -95,34 +96,23 @@ def build_figure() -> Path:
                 color="#3F3F3F",
             )
 
-    for tick, color in zip(ax.get_xticklabels(), METHOD_COLORS):
-        tick.set_color(color)
-
     ax.set_xticks(x, METHODS)
-    ax.set_ylim(0.28, 1.02)
+    ax.set_ylim(0.30, 1.02)
     ax.set_ylabel("Score")
-    ax.set_title("Task-2 Open-Set-Oriented Anomaly Recognition", loc="left", pad=6, fontweight="bold")
     ax.legend(
-        loc="upper left",
-        bbox_to_anchor=(0.01, 0.99),
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.16),
         frameon=False,
         ncol=2,
-        columnspacing=1.0,
+        columnspacing=1.2,
         handlelength=1.6,
         borderaxespad=0.0,
     )
     ax.grid(axis="y", linestyle="-", alpha=0.55)
     ax.grid(axis="x", visible=False)
+    ax.set_axisbelow(True)
 
-    fig.text(
-        0.01,
-        0.01,
-        "Mean +/- std over 3 folds. Dual denotes the best classical two-camera baseline.",
-        fontsize=7.8,
-        color="#4F4F4F",
-    )
-
-    fig.tight_layout(rect=(0.0, 0.06, 1.0, 1.0))
+    fig.tight_layout(rect=(0.0, 0.05, 1.0, 1.0))
     out_path = EXPORT_DIR / "fig_task2_anomaly_bar"
     fig.savefig(out_path.with_suffix(".pdf"), bbox_inches="tight")
     fig.savefig(out_path.with_suffix(".png"), bbox_inches="tight")
